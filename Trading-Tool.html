@@ -1472,8 +1472,11 @@ async function loadWeekPlan(){
     if(r){
       state_wp = JSON.parse(r.value);
     } else {
+      // Kein Dokument gefunden — nur lokal leer anzeigen, NICHT sofort speichern.
+      // Erst wenn der Nutzer wirklich etwas einträgt, wird über die normalen
+      // Save-Aufrufe geschrieben. So kann ein kurzer Lese-Aussetzer nie echte
+      // Daten in Firestore überschreiben.
       state_wp = { weekStart: getMonday(new Date()).toISOString(), events: [], assets: [] };
-      await saveWeekPlan();
     }
   }catch(e){
     state_wp = { weekStart: getMonday(new Date()).toISOString(), events: [], assets: [] };
