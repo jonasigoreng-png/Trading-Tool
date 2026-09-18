@@ -890,6 +890,105 @@
 </div>
 
 <script>
+/* ---------- Firebase (geräteübergreifende Synchronisierung) ---------- */
+/* WICHTIG: Dieser Block muss ganz am Anfang des Skripts stehen — alles andere
+   (loadPlaybook, loadWeekPlan, etc.) greift beim Laden der Seite sofort auf
+   fbDb/firebaseReady/storageSet/storageGet zu. Stünde dieser Block weiter unten,
+   wären diese Variablen zu dem Zeitpunkt noch nicht initialisiert (Temporal Dead
+   Zone bei let/const), der Zugriff würfe einen Fehler, der vom try/catch der
+   aufrufenden Funktion lautlos abgefangen würde — die Seite würde dann immer
+   auf einen leeren Zustand zurückfallen, obwohl in Firestore echte Daten liegen. */
+const firebaseConfig = {
+  apiKey: "AIzaSyD5uGzAV8IX9JDS_oe_OHHAR5k7uLsmhnE",
+  authDomain: "trading-tool-98e65.firebaseapp.com",
+  projectId: "trading-tool-98e65",
+  storageBucket: "trading-tool-98e65.firebasestorage.app",
+  messagingSenderId: "925896286917",
+  appId: "1:925896286917:web:573b98fe4214319f0986ac",
+  measurementId: "G-HEGGR0CZKH"
+};
+
+let fbDb = null;
+let firebaseReady = Promise.resolve(false);
+
+if(typeof firebase !== 'undefined'){
+  try{
+    firebase.initializeApp(firebaseConfig);
+    fbDb = firebase.firestore();
+    firebaseReady = firebase.auth().signInAnonymously()
+      .then(()=> true)
+      .catch((e)=>{ console.warn('Firebase Anmeldung fehlgeschlagen, nutze Fallback:', e); return false; });
+  }catch(e){
+    console.warn('Firebase Initialisierung fehlgeschlagen, nutze Fallback:', e);
+  }
+}
+
+async function hasFirestore(){
+  if(!fbDb) return false;
+  try{ return await firebaseReady; }catch(e){ return false; }
+}
+
+/* ---------- Storage-Abstraktion ---------- */
+/* Reihenfolge: Firestore (geräteübergreifend, dein Firebase-Account) → window.storage
+   (funktioniert innerhalb der Claude-Oberfläche) → localStorage (lokaler Fallback,
+   z.B. wenn Firestore/Netzwerk gerade nicht erreichbar ist). */
+function hasClaudeStorage(){
+  return typeof window.storage !== 'undefined' && window.storage;
+}
+
+async function storageSet(key, value){
+  if(await hasFirestore()){
+    try{
+      await fbDb.collection('kv').doc(key).set({ value: value, updatedAt: Date.now() });
+      return { key, value, shared:false };
+    }catch(e){ console.warn('Firestore-Schreibvorgang fehlgeschlagen, nutze Fallback:', e); }
+  }
+  if(hasClaudeStorage()){
+    return await window.storage.set(key, value, false);
+  }
+  localStorage.setItem(key, value);
+  return { key, value, shared:false };
+}
+
+async function storageList(prefix){
+  if(await hasFirestore()){
+    try{
+      const snap = await fbDb.collection('kv')
+        .where(firebase.firestore.FieldPath.documentId(), '>=', prefix)
+        .where(firebase.firestore.FieldPath.documentId(), '<', prefix + '\uf8ff')
+        .get();
+      const keys = [];
+      snap.forEach(d=> keys.push(d.id));
+      return { keys, prefix };
+    }catch(e){ console.warn('Firestore-Liste fehlgeschlagen, nutze Fallback:', e); }
+  }
+  if(hasClaudeStorage()){
+    return await window.storage.list(prefix);
+  }
+  const keys = [];
+  for(let i=0;i<localStorage.length;i++){
+    const k = localStorage.key(i);
+    if(k && k.startsWith(prefix)) keys.push(k);
+  }
+  return { keys, prefix };
+}
+
+async function storageGet(key){
+  if(await hasFirestore()){
+    try{
+      const docSnap = await fbDb.collection('kv').doc(key).get();
+      if(docSnap.exists) return { key, value: docSnap.data().value, shared:false };
+      return null;
+    }catch(e){ console.warn('Firestore-Lesevorgang fehlgeschlagen, nutze Fallback:', e); }
+  }
+  if(hasClaudeStorage()){
+    return await window.storage.get(key, false);
+  }
+  const v = localStorage.getItem(key);
+  if(v===null) return null;
+  return { key, value:v, shared:false };
+}
+
 /* ---------- Tab-Navigation ---------- */
 document.querySelectorAll('.tab').forEach(tab=>{
   tab.addEventListener('click', ()=>{
@@ -2096,98 +2195,6 @@ document.getElementById('resetBtn').addEventListener('click', ()=>{
   renderQuestions();
   document.getElementById('notes').value='';
 });
-
-/* ---------- Firebase (geräteübergreifende Synchronisierung) ---------- */
-const firebaseConfig = {
-  apiKey: "AIzaSyD5uGzAV8IX9JDS_oe_OHHAR5k7uLsmhnE",
-  authDomain: "trading-tool-98e65.firebaseapp.com",
-  projectId: "trading-tool-98e65",
-  storageBucket: "trading-tool-98e65.firebasestorage.app",
-  messagingSenderId: "925896286917",
-  appId: "1:925896286917:web:573b98fe4214319f0986ac",
-  measurementId: "G-HEGGR0CZKH"
-};
-
-let fbDb = null;
-let firebaseReady = Promise.resolve(false);
-
-if(typeof firebase !== 'undefined'){
-  try{
-    firebase.initializeApp(firebaseConfig);
-    fbDb = firebase.firestore();
-    firebaseReady = firebase.auth().signInAnonymously()
-      .then(()=> true)
-      .catch((e)=>{ console.warn('Firebase Anmeldung fehlgeschlagen, nutze Fallback:', e); return false; });
-  }catch(e){
-    console.warn('Firebase Initialisierung fehlgeschlagen, nutze Fallback:', e);
-  }
-}
-
-async function hasFirestore(){
-  if(!fbDb) return false;
-  try{ return await firebaseReady; }catch(e){ return false; }
-}
-
-/* ---------- Storage-Abstraktion ---------- */
-/* Reihenfolge: Firestore (geräteübergreifend, dein Firebase-Account) → window.storage
-   (funktioniert innerhalb der Claude-Oberfläche) → localStorage (lokaler Fallback,
-   z.B. wenn Firestore/Netzwerk gerade nicht erreichbar ist). */
-function hasClaudeStorage(){
-  return typeof window.storage !== 'undefined' && window.storage;
-}
-
-async function storageSet(key, value){
-  if(await hasFirestore()){
-    try{
-      await fbDb.collection('kv').doc(key).set({ value: value, updatedAt: Date.now() });
-      return { key, value, shared:false };
-    }catch(e){ console.warn('Firestore-Schreibvorgang fehlgeschlagen, nutze Fallback:', e); }
-  }
-  if(hasClaudeStorage()){
-    return await window.storage.set(key, value, false);
-  }
-  localStorage.setItem(key, value);
-  return { key, value, shared:false };
-}
-
-async function storageList(prefix){
-  if(await hasFirestore()){
-    try{
-      const snap = await fbDb.collection('kv')
-        .where(firebase.firestore.FieldPath.documentId(), '>=', prefix)
-        .where(firebase.firestore.FieldPath.documentId(), '<', prefix + '\uf8ff')
-        .get();
-      const keys = [];
-      snap.forEach(d=> keys.push(d.id));
-      return { keys, prefix };
-    }catch(e){ console.warn('Firestore-Liste fehlgeschlagen, nutze Fallback:', e); }
-  }
-  if(hasClaudeStorage()){
-    return await window.storage.list(prefix);
-  }
-  const keys = [];
-  for(let i=0;i<localStorage.length;i++){
-    const k = localStorage.key(i);
-    if(k && k.startsWith(prefix)) keys.push(k);
-  }
-  return { keys, prefix };
-}
-
-async function storageGet(key){
-  if(await hasFirestore()){
-    try{
-      const docSnap = await fbDb.collection('kv').doc(key).get();
-      if(docSnap.exists) return { key, value: docSnap.data().value, shared:false };
-      return null;
-    }catch(e){ console.warn('Firestore-Lesevorgang fehlgeschlagen, nutze Fallback:', e); }
-  }
-  if(hasClaudeStorage()){
-    return await window.storage.get(key, false);
-  }
-  const v = localStorage.getItem(key);
-  if(v===null) return null;
-  return { key, value:v, shared:false };
-}
 
 /* ---------- Journal ---------- */
 async function loadJournal(){
