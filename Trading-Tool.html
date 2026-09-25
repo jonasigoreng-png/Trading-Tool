@@ -722,7 +722,7 @@
 
     <div class="panel" id="notesPanel" style="display:none;">
       <div class="panel-label">Notiz (optional)</div>
-      <textarea id="notes" placeholder="Symbol, Chart-Kontext, Beobachtungen..."></textarea>
+      <textarea id="notes" placeholder="Symbol, chart context, observations..."></textarea>
     </div>
 
     <div class="verdict" id="verdict" style="display:none;">
@@ -730,7 +730,7 @@
       <div class="verdict-value" id="verdictValue">—</div>
       <div class="flags" id="flagsList"></div>
       <div class="actions">
-        <button class="btn primary" id="saveBtn">Im Journal speichern</button>
+        <button class="btn primary" id="saveBtn">Save to Journal</button>
         <button class="btn" id="resetBtn">Zurücksetzen</button>
       </div>
     </div>
@@ -770,7 +770,7 @@
     <p class="sub">Bevor du eine Order löschst — kurz den echten Grund checken. Manche Gründe sind legitim, manche sind nur ein Reflex.</p>
 
     <div class="panel">
-      <div class="panel-label">Warum willst du die Order löschen?</div>
+      <div class="panel-label">Why do you want to pull this order?</div>
       <div id="pullReasonList"></div>
     </div>
 
@@ -778,7 +778,7 @@
       <div class="panel-label">Nochmal genauer hinschauen</div>
       <div id="pullFollowupContainer"></div>
       <div class="actions" style="justify-content:flex-start; margin-top:16px;">
-        <button class="btn primary" id="pullLogBtn">Im Log speichern</button>
+        <button class="btn primary" id="pullLogBtn">Save to Log</button>
         <button class="btn" id="pullResetBtn">Zurücksetzen</button>
       </div>
     </div>
@@ -793,7 +793,7 @@
   <div class="page" id="tradingplanPage">
 
     <h1>Trading Plan</h1>
-    <p class="sub">Der laufende Wochenplan — wird jede Woche neu gestartet und jeden Morgen aktualisiert.</p>
+    <p class="sub">The current weekly plan — restarts every week and updates every morning.</p>
 
     <!-- THIS WEEK'S PLAN -->
     <div class="panel">
@@ -815,7 +815,7 @@
       <div class="panel-label">Events This Week</div>
       <div id="eventsList"></div>
       <div class="actions" style="margin-top:10px;">
-        <input class="tp-input" type="text" id="newEventInput" placeholder="z.B. FOMC Wednesday 8PM" style="flex:1;">
+        <input class="tp-input" type="text" id="newEventInput" placeholder="e.g. FOMC Wednesday 8PM" style="flex:1;">
         <button class="btn" id="addEventBtn">+ Add</button>
       </div>
     </div>
@@ -890,14 +890,14 @@
 </div>
 
 <script>
-/* ---------- Firebase (geräteübergreifende Synchronisierung) ---------- */
-/* WICHTIG: Dieser Block muss ganz am Anfang des Skripts stehen — alles andere
-   (loadPlaybook, loadWeekPlan, etc.) greift beim Laden der Seite sofort auf
-   fbDb/firebaseReady/storageSet/storageGet zu. Stünde dieser Block weiter unten,
-   wären diese Variablen zu dem Zeitpunkt noch nicht initialisiert (Temporal Dead
-   Zone bei let/const), der Zugriff würfe einen Fehler, der vom try/catch der
-   aufrufenden Funktion lautlos abgefangen würde — die Seite würde dann immer
-   auf einen leeren Zustand zurückfallen, obwohl in Firestore echte Daten liegen. */
+/* ---------- Firebase (cross-device sync) ---------- */
+/* IMPORTANT: This block must sit right at the top of the script — everything else
+   (loadPlaybook, loadWeekPlan, etc.) reaches for fbDb/firebaseReady/storageSet/storageGet
+   immediately on page load. If this block were further down, those variables would
+   not be initialized yet at that point (temporal dead zone with let/const), the
+   access would throw an error that the calling function's try/catch would swallow
+   silently — the page would then always fall back to an empty state, even though
+   real data sits in Firestore. */
 const firebaseConfig = {
   apiKey: "AIzaSyD5uGzAV8IX9JDS_oe_OHHAR5k7uLsmhnE",
   authDomain: "trading-tool-98e65.firebaseapp.com",
@@ -928,7 +928,7 @@ async function hasFirestore(){
   try{ return await firebaseReady; }catch(e){ return false; }
 }
 
-/* ---------- Storage-Abstraktion ---------- */
+/* ---------- Storage abstraction ---------- */
 /* Reihenfolge: Firestore (geräteübergreifend, dein Firebase-Account) → window.storage
    (funktioniert innerhalb der Claude-Oberfläche) → localStorage (lokaler Fallback,
    z.B. wenn Firestore/Netzwerk gerade nicht erreichbar ist). */
@@ -989,7 +989,7 @@ async function storageGet(key){
   return { key, value:v, shared:false };
 }
 
-/* ---------- Tab-Navigation ---------- */
+/* ---------- Tab navigation ---------- */
 document.querySelectorAll('.tab').forEach(tab=>{
   tab.addEventListener('click', ()=>{
     document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
@@ -1001,7 +1001,7 @@ document.querySelectorAll('.tab').forEach(tab=>{
   });
 });
 
-/* ---------- Pattern-Definitionen ---------- */
+/* ---------- Pattern definitions ---------- */
 const PATTERNS = {
   long: [
     { id:'bull_engulf', label:'Bullish Engulfing', group:'engulfing' },
@@ -1015,6 +1015,8 @@ const PATTERNS = {
     { id:'trendline_fail', label:'Trendline Fail', group:'trendline' },
     { id:'breakout', label:'Breakout', group:'breakout' },
     { id:'level_reclaim', label:'Level Reclaim', group:'levelreclaim' },
+    { id:'lhpb', label:'LHPB', group:'lhpb' },
+    { id:'llpb', label:'LLPB', group:'llpb' },
   ],
   short: [
     { id:'bear_engulf', label:'Bearish Engulfing', group:'engulfing' },
@@ -1028,6 +1030,8 @@ const PATTERNS = {
     { id:'trendline_fail', label:'Trendline Fail', group:'trendline' },
     { id:'breakdown', label:'Breakdown', group:'breakdown' },
     { id:'level_rejection', label:'Level Rejection', group:'levelrejection' },
+    { id:'lhpb', label:'LHPB', group:'lhpb' },
+    { id:'llpb', label:'LLPB', group:'llpb' },
   ]
 };
 
@@ -1045,6 +1049,8 @@ const ENTRY_OPTIONS = {
   breakdown: ['Breakdown Level','Retest of Breakdown Level','1h Level'],
   levelreclaim: ['Reclaimed Level','Retest of Reclaimed Level','1h Level'],
   levelrejection: ['Rejected Level','Retest of Rejected Level','1h Level'],
+  lhpb: ['LHPB Level','Retest of LHPB Level','1h Level'],
+  llpb: ['LLPB Level','Retest of LLPB Level','1h Level'],
 };
 
 const ZONE_OPTIONS = ['Weekly zone or level','Daily zone or level','Daily LHPB/LLPB','Daily LHPB/LLPB inverted','0.382','0.5','0.618','EMA12','EMA24','H&S','H&S Fail','None of these'];
@@ -1067,14 +1073,8 @@ const MANAGEMENT_ITEMS = [
 const CANDLE_CHECKS = {
   engulfing: [
     { type:'choice', id:'cc_eng_type', title:'Reversal move, continuation candle, or is it happening in a range?', options:['Reversal','Continuation','Range'], ideal:['Reversal'], hint:'You want to see a reversal rather than a continuation or a range candle.' },
-    { type:'text', id:'cc_eng_wick', title:'Did we close high up? How does the upper/lower wick look?', placeholder:'Kurze Notiz...' },
+    { type:'text', id:'cc_eng_wick', title:'Did we close high up? How does the upper/lower wick look?', placeholder:'Short note...' },
     { type:'choice', id:'cc_eng_color', title:'Did we engulf the expected candle color?', options:['Yes','No'], ideal:['Yes'], hint:'Bullish scenario → a red candle gets engulfed. Bearish scenario → a green candle gets engulfed.' },
-    { type:'text', id:'cc_eng_story', title:'Do you see a story behind this candle?', placeholder:'Kurze Notiz...' },
-  ],
-  engulfing_failed: [
-    { type:'choice', id:'cc_engf_type', title:'Reversal move, continuation candle, or is it happening in a range?', options:['Reversal','Continuation','Range'], ideal:['Reversal'], hint:'You want to see a reversal rather than a continuation or a range candle.' },
-    { type:'text', id:'cc_engf_validfail', title:'Is it a valid fail?', placeholder:'Kurze Notiz...', hint:'Did we break the low/high of the engulfing, or did we come back into its range after thrusting away from it?' },
-    { type:'text', id:'cc_engf_story', title:'Do you see a story behind this candle?', placeholder:'Kurze Notiz...' },
   ],
   hammer: [
     { type:'choice', id:'cc_ham_type', title:'Does it happen as a reversal, continuation, or in a range?', options:['Reversal','Continuation','Range'], ideal:['Reversal'], hint:'You don\u2019t want the range or continuation scenario.' },
@@ -1082,7 +1082,6 @@ const CANDLE_CHECKS = {
     { type:'choice', id:'cc_ham_lowerwick', title:'Long lower wick?', options:['Yes','No'], ideal:['Yes'], hint:'That\u2019s the ideal.' },
     { type:'choice', id:'cc_ham_upperwick', title:'Short or no upper wick?', options:['Yes','No'], ideal:['Yes'], hint:'That\u2019s the ideal.' },
     { type:'choice', id:'cc_ham_close', title:'Did we close above the previous day\u2019s low?', options:['Yes','No'], ideal:['Yes'] },
-    { type:'text', id:'cc_ham_story', title:'Do you see a story behind this candle?', placeholder:'Kurze Notiz...' },
   ],
   shootingstar: [
     { type:'choice', id:'cc_ss_type', title:'Does it happen as a reversal, continuation, or in a range?', options:['Reversal','Continuation','Range'], ideal:['Reversal'], hint:'You don\u2019t want the range or continuation scenario.' },
@@ -1091,34 +1090,53 @@ const CANDLE_CHECKS = {
     { type:'choice', id:'cc_ss_size', title:'Is the whole candle big enough — roughly average day range?', options:['Yes','No'], ideal:['Yes'] },
     { type:'choice', id:'cc_ss_close', title:'Did it close beneath the prior day\u2019s high?', options:['Yes','No'], ideal:['Yes'], hint:'You want to see that.' },
   ],
+  /* Failed patterns don't ask "is this a good example of the candle" — the candle already
+     failed to hold, so what matters is whether the FAILURE itself is valid and confirmed,
+     not the quality of the original candle. */
+  engulfing_failed: [
+    { type:'choice', id:'cc_engf_type', title:'Reversal move, continuation candle, or is it happening in a range?', options:['Reversal','Continuation','Range'], ideal:['Reversal'], hint:'You want to see a reversal rather than a continuation or a range candle.' },
+    { type:'text', id:'cc_engf_validfail', title:'Is it a valid fail?', placeholder:'Short note...', hint:'Did we break the low/high of the engulfing, or did we come back into its range after thrusting away from it?' },
+    { type:'choice', id:'cc_engf_momentum', title:'Did the break come with strong momentum, or does it look like a weak poke through?', options:['Strong momentum','Weak poke'], ideal:['Strong momentum'] },
+  ],
+  hammer_failed: [
+    { type:'choice', id:'cc_hamf_type', title:'Does it happen as a reversal, continuation, or in a range?', options:['Reversal','Continuation','Range'], ideal:['Reversal'], hint:'You don\u2019t want the range or continuation scenario.' },
+    { type:'text', id:'cc_hamf_validfail', title:'Is it a valid fail?', placeholder:'Short note...', hint:'Did price close back below the hammer\u2019s low, confirming the fail — or did it just wick through and reclaim back inside its range?' },
+    { type:'choice', id:'cc_hamf_momentum', title:'Did the break below the low come with strong momentum, or does it look like a weak poke through?', options:['Strong momentum','Weak poke'], ideal:['Strong momentum'] },
+  ],
+  shootingstar_failed: [
+    { type:'choice', id:'cc_ssf_type', title:'Does it happen as a reversal, continuation, or in a range?', options:['Reversal','Continuation','Range'], ideal:['Reversal'], hint:'You don\u2019t want the range or continuation scenario.' },
+    { type:'text', id:'cc_ssf_validfail', title:'Is it a valid fail?', placeholder:'Short note...', hint:'Did price close back above the shooting star\u2019s high, confirming the fail — or did it just wick through and reclaim back inside its range?' },
+    { type:'choice', id:'cc_ssf_momentum', title:'Did the break above the high come with strong momentum, or does it look like a weak poke through?', options:['Strong momentum','Weak poke'], ideal:['Strong momentum'] },
+  ],
 };
 
-/* Maps a specific pattern id to which candle-check set applies. Failed engulfing gets its own set
-   (validity-of-fail question instead of wick/close, and no color check) since it's a distinct read
-   from a normal engulfing candle, even though it shares the same entry-level group. */
+/* Maps a specific pattern id to which candle-check set applies. Every failed pattern gets its own
+   set (a validity-of-fail question plus a momentum check, instead of the normal wick/size/close
+   quality checks) since evaluating a failed setup is a different read from evaluating a normal one,
+   even though failed and normal variants share the same entry-level group. */
 const PATTERN_TO_CANDLECHECK = {
   bull_engulf: 'engulfing',
   bear_engulf: 'engulfing',
   failed_bull_engulf: 'engulfing_failed',
   failed_bear_engulf: 'engulfing_failed',
   hammer: 'hammer',
-  failed_hammer: 'hammer',
+  failed_hammer: 'hammer_failed',
   shootingstar: 'shootingstar',
-  failed_shootingstar: 'shootingstar',
+  failed_shootingstar: 'shootingstar_failed',
 };
 
 const UNIVERSAL_REMINDERS = [
-  { type:'choice', id:'cc_confluence', title:'ATR & Fibonacci — did you check these as further confluence for your level?', options:['Yes','No'], ideal:['Yes'] },
-  { type:'text', id:'cc_time', title:'What\u2019s the time of day? How would the current daily candle look like if you\u2019d get filled?', placeholder:'Kurze Notiz...' },
-  { type:'text', id:'cc_trade_story', title:'Can you tell a story about this trade?', placeholder:'Kurze Notiz...' },
+  { type:'choice', id:'cc_confluence', title:'ATR & Fibonacci — did you check these as further confluence for your level?', options:['Yes','No'], ideal:['Yes'], hint:'Also check for confluence with Single Prints and Poor High/Low.' },
+  { type:'text', id:'cc_time', title:'What\u2019s the time of day? How would the current daily candle look like if you\u2019d get filled?', placeholder:'Short note...' },
+  { type:'text', id:'cc_trade_story', title:'Can you tell a story about this trade?', placeholder:'Short note...' },
 ];
 
-const BIAS_CHECK = { type:'choice', id:'cc_bias', title:'Does your planned entry still go with your bias if price reaches that level? Daily bias? 1h bias?', options:['Still fits','Would have to flip'], ideal:['Still fits'], hint:'Reminder only — but if this flips, it likely deserves a proper second look, not just a note.' };
+const BIAS_CHECK = { type:'choice', id:'cc_bias', title:'Does your planned entry still go with your bias if price reaches that level? Daily bias? 1h bias?', options:['Still fits','Would have to flip'], ideal:['Still fits'], hint:'Reminder only — but if this flips, it likely deserves a proper second look, not just a note. E.g. structure on the 1h changes from bearish to bullish.' };
 
 /* ---------- State ---------- */
 let state = { dir:null, patterns:[], tf:null, answers:{}, mgmt:{}, pullReason:null, pullAnswer:null };
 
-/* ---------- Step 1: Richtung ---------- */
+/* ---------- Step 1: Direction ---------- */
 document.querySelectorAll('.chip.dir').forEach(el=>{
   el.addEventListener('click', ()=>{
     state.dir = el.dataset.dir;
@@ -1182,7 +1200,7 @@ function currentPatternLabel(){
   return currentPatterns().map(p=>p.label).join(' + ');
 }
 
-/* ---------- Fragen rendern ---------- */
+/* ---------- Render questions ---------- */
 function renderQuestions(){
   document.getElementById('qPanel').style.display='block';
   document.getElementById('notesPanel').style.display='block';
@@ -1195,24 +1213,24 @@ function renderQuestions(){
   /* 1) CANDLE SHAPE — what does the candle actually look like, before anything else */
   const ccKeys = [...new Set(currentPatterns().map(p=>PATTERN_TO_CANDLECHECK[p.id]).filter(Boolean))];
   if(ccKeys.length>0){
-    c.appendChild(sectionDivider('Candle Shape', 'Reminder — kein Einfluss auf das Ergebnis'));
+    c.appendChild(sectionDivider('Candle Shape', 'Reminder — no impact on the result'));
     ccKeys.forEach(key=>{
       CANDLE_CHECKS[key].forEach(q=> c.appendChild(buildReminderItem(q, N())));
     });
   }
 
   /* 2) LOCATION & STRUCTURE — where does it happen, is the level worth anything */
-  c.appendChild(sectionDivider('Location & Struktur'));
-  c.appendChild(buildTextNote('q1', N()+'. Where does the setup happen?', 'z.B. Weekly Zone, Daily LHPB/LLPB, 0.618, EMA24, H&S...', 'Nenn die Zone/das Level, an dem das Setup passiert. Leer lassen zählt als Ausschlussgrund — es sollte immer ein struktureller Grund benennbar sein.'));
+  c.appendChild(sectionDivider('Location & Structure'));
+  c.appendChild(buildTextNote('q1', N()+'. Where does the setup happen?', 'e.g. Weekly Zone, Daily LHPB/LLPB, 0.618, EMA24, H&S...', 'Name the zone/level where the setup happens. Leaving this empty counts as a reason to skip the trade — there should always be a nameable structural reason.'));
   c.appendChild(buildYesNo('q10', N()+'. Is the level you are planning to buy/sell an untouched previous support or resistance?', 'no', 'wait', null, null, 'Necessary for a limit order. If not, wait for price action at that level.'));
   c.appendChild(buildChoice('q_levelrating', N()+'. How would you rate the level you are trading on your 1-3 scale?', ['1','2','3'], ['3'], 'Check for inflection points, Fibs, ATR, recent respect of the level, aggressiveness of the reactions from it.'));
 
   /* 3) KONTEXT — macro check before diving into the technical detail */
-  c.appendChild(sectionDivider('Kontext'));
+  c.appendChild(sectionDivider('Context'));
   c.appendChild(buildYesNo('q_news', N()+'. Did you check for News Events?', 'no', 'wait', null, null, 'News events can invalidate even a clean technical setup — always worth a quick check before you\u2019re in.'));
 
   /* 4) LEVEL INTERFERENCE — anything around that could mess with the idea */
-  c.appendChild(sectionDivider('Level-Interferenz'));
+  c.appendChild(sectionDivider('Level Interference'));
   c.appendChild(buildYesNoText('q2', N()+'. Other levels or candles that are contrary to this setup? Check on the daily and weekly.', 'If yes — which one?', 'nogo', '(e.g. an opposing Hammer or Engulfing forming against you on other timeframes — e.g. thrust of a Hammer running into a daily level.)'));
   c.appendChild(buildYesNoText('q3', N()+'. Did you mark out other levels that could cause trouble or invalidate the setup?', 'If yes, which ones?', 'wait', 'Not a red flag, but be aware in terms of your target — be ready to change target, tighten stops, or close early. Set an alarm at these levels.', 'no'));
   c.appendChild(buildYesNoText('q4', N()+'. Are there more interesting entry levels higher/lower from where you are planning to enter?', 'If yes, which ones?', 'wait', 'Squeezes happen, stay patient. Squeezes happen more often than you think — better to miss a trade than take a loser.'));
@@ -1220,7 +1238,7 @@ function renderQuestions(){
   /* 5) PRICE BEHAVIOR — how has price actually been acting around this setup */
   c.appendChild(sectionDivider('Price Behavior'));
   c.appendChild(buildYesNo('q5', N()+'. Did price come close to your target already?', 'yes', 'wait', null, null, 'Not necessarily a red flag, but have another look — you might want to reevaluate.'));
-  c.appendChild(buildYesNo('q6', N()+'. Is it a clear setup or are you getting mixed signals?', 'no', 'nogo', 'Clear setup', 'Mixed signals', 'If it\'s not clear, stay out. Check other assets — there might be better trades than this one.'));
+  c.appendChild(buildYesNo('q6', N()+'. Is it a clear setup or are you getting mixed signals?', 'no', 'nogo', 'Clear setup', 'Mixed signals', 'If it\'s not clear, stay out. Check other assets — there might be better trades than this one. Mixed signal could be conflicting biases, e.g. daily bias bullish but 1h bias bearish.'));
   c.appendChild(buildYesNo('q7', N()+'. Did price come close to your entry already and reacted from it?', 'yes', 'wait', null, null, 'You might want to pull this order! The trapped traders you are betting on might already be out of their trades.'));
   c.appendChild(buildYesNo('q8', N()+'. Is there developing S/R PA on the 1h close to your entry?', 'yes', 'wait', null, null, 'Check if your R:R is still worth it. You prefer price coming strongly into your level and reacting from it — staircase PA building a new level in front of your entry is a warning sign.'));
   c.appendChild(buildReminderItem(BIAS_CHECK, N()));
@@ -1241,7 +1259,7 @@ function renderQuestions(){
 function entryLevelPlaceholder(){
   const groups = [...new Set(currentPatterns().map(p=>p.group))];
   const opts = [...new Set(groups.flatMap(g=>ENTRY_OPTIONS[g] || []))];
-  return opts.length>0 ? 'z.B. ' + opts.join(', ') : 'z.B. 1h Level, Retest...';
+  return opts.length>0 ? 'e.g. ' + opts.join(', ') : 'e.g. 1h Level, Retest...';
 }
 
 function sectionDivider(label, badge){
@@ -1326,12 +1344,12 @@ renderManagement();
 /* ---------- Pull Order Check ---------- */
 const PULL_REASONS = [
   { id:'A1', label:'Too many orders in.', followup: { type:'choice', title:'Why do you choose to delete this one?', options:['Worst R:R','The least clean setup','Correlation with other pairs'] } },
-  { id:'A2', label:'Price came close to my entry, didn\u2019t fill me and moved aggressively away from it.', followup: { type:'text', title:'How close did it come to your entry? Would it break structure if you got a fill now?', placeholder:'Kurze Notiz...' } },
+  { id:'A2', label:'Price came close to my entry, didn\u2019t fill me and moved aggressively away from it.', followup: { type:'text', title:'How close did it come to your entry? Would it break structure if you got a fill now?', placeholder:'Short note...' } },
   { id:'A3', label:'Price came too close to my target already.', followup: { type:'choice', title:'How close are you to your target already? Is most of the move done?', options:['Very close, looks like it\u2019s done.','Not sure, there might be still quite some decent room for the trade, actually.'] } },
   { id:'A4', label:'It\u2019s late Friday, I don\u2019t want to get filled before the weekend.', followup: { type:'note', title:'Fair enough. Maybe worth it to check in on Sunday eve?' } },
   { id:'A5', label:'It\u2019s late in the day, I don\u2019t like how this Daily candle would look like when I get a fill.', followup: { type:'note', title:'Fair enough, keep it in mind for tomorrow. Maybe set an alert.' } },
-  { id:'A6', label:'It looks like price is building another level closer to my entry, so R:R isn\u2019t worth it anymore.', followup: { type:'text', title:'Is the new level actually significant, or could this still resolve in your favor? What would your R:R look like if you adjusted for it?', placeholder:'Kurze Notiz...' } },
-  { id:'A7', label:'Price is just ranging; I feel like we are not going anywhere, so maybe this is rather bullish/bearish.', followup: { type:'text', title:'It seems like this is just based on a feeling, rather than proper technical analysis. Does it really look like it would go against you? Would you flip your bias here?', placeholder:'Kurze Notiz...' } },
+  { id:'A6', label:'It looks like price is building another level closer to my entry, so R:R isn\u2019t worth it anymore.', followup: { type:'text', title:'Is the new level actually significant, or could this still resolve in your favor? What would your R:R look like if you adjusted for it?', placeholder:'Short note...' } },
+  { id:'A7', label:'Price is just ranging; I feel like we are not going anywhere, so maybe this is rather bullish/bearish.', followup: { type:'text', title:'It seems like this is just based on a feeling, rather than proper technical analysis. Does it really look like it would go against you? Would you flip your bias here?', placeholder:'Short note...' } },
 ];
 
 function renderPullReasons(){
@@ -1414,14 +1432,14 @@ document.getElementById('pullLogBtn').addEventListener('click', async ()=>{
 
   const btn = document.getElementById('pullLogBtn');
   btn.disabled = true;
-  btn.textContent = 'Speichere...';
+  btn.textContent = 'Saving...';
   try{
     await storageSet('pull:'+entry.ts, JSON.stringify(entry));
-    btn.textContent = 'Gespeichert ✓';
-    setTimeout(()=>{ btn.textContent='Im Log speichern'; btn.disabled=false; }, 1200);
+    btn.textContent = 'Saved ✓';
+    setTimeout(()=>{ btn.textContent='Save to Log'; btn.disabled=false; }, 1200);
     loadPullLog();
   }catch(e){
-    btn.textContent = 'Fehler — erneut versuchen';
+    btn.textContent = 'Error — try again';
     btn.disabled = false;
   }
 });
@@ -1571,7 +1589,7 @@ async function loadWeekPlan(){
     if(r){
       state_wp = JSON.parse(r.value);
     } else {
-      // Kein Dokument gefunden — nur lokal leer anzeigen, NICHT sofort speichern.
+      // No document found — just show it empty locally, do NOT save immediately.
       // Erst wenn der Nutzer wirklich etwas einträgt, wird über die normalen
       // Save-Aufrufe geschrieben. So kann ein kurzer Lese-Aussetzer nie echte
       // Daten in Firestore überschreiben.
@@ -1607,7 +1625,7 @@ function renderWeeklyOverview(){
   }
 
   if(state_wp.assets.length===0){
-    wrap.innerHTML += '<div class="empty-hint">Noch keine Asset-Pläne diese Woche.</div>';
+    wrap.innerHTML += '<div class="empty-hint">No asset plans yet this week.</div>';
     return;
   }
 
@@ -1832,8 +1850,8 @@ document.getElementById('startNewWeekBtn').addEventListener('click', ()=>{
   note.className = 'empty-hint';
   note.style.marginBottom = '10px';
   note.textContent = state_wp.assets.length>0
-    ? 'Welche Asset-Pläne sollen in die neue Woche übernommen werden?'
-    : 'Keine offenen Asset-Pläne. Neue Woche starten?';
+    ? 'Which asset plans should carry over into the new week?'
+    : 'No open asset plans. Start new week?';
   confirmPanel.appendChild(note);
 
   const carryChoices = {};
@@ -1924,16 +1942,16 @@ document.getElementById('saveCheckinBtn').addEventListener('click', async ()=>{
   const entry = { ts: Date.now(), ...state_checkin };
   const btn = document.getElementById('saveCheckinBtn');
   btn.disabled = true;
-  btn.textContent = 'Speichere...';
+  btn.textContent = 'Saving...';
   try{
     await storageSet('dailycheckin:'+entry.ts, JSON.stringify(entry));
-    btn.textContent = 'Gespeichert ✓';
+    btn.textContent = 'Saved ✓';
     setTimeout(()=>{ btn.textContent='Save Check-in'; btn.disabled=false; }, 1200);
     state_checkin = { calendar:null, wentWell:'', wentBad:'', followedPlan:null };
     renderDailyCheckinForm();
     loadCheckinLog();
   }catch(e){
-    btn.textContent = 'Fehler — erneut versuchen';
+    btn.textContent = 'Error — try again';
     btn.disabled = false;
   }
 });
@@ -1962,7 +1980,7 @@ function renderCheckinLog(entries){
   const list = document.getElementById('checkinLogList');
   panel.style.display = 'block';
   if(entries.length===0){
-    list.innerHTML = '<div class="empty-journal">Noch keine Check-ins diese Woche.</div>';
+    list.innerHTML = '<div class="empty-journal">No check-ins yet this week.</div>';
     return;
   }
   list.innerHTML = '';
@@ -2132,7 +2150,7 @@ function buildScale(id, title, labels, flagMap){
   return wrap;
 }
 
-/* ---------- Verdict-Logik ---------- */
+/* ---------- Verdict logic ---------- */
 function updateVerdict(){
   const a = state.answers;
   const nogoFlags = [];
@@ -2173,7 +2191,7 @@ function updateVerdict(){
   valueEl.textContent = label;
 
   if(nogoFlags.length===0 && waitFlags.length===0){
-    flagsList.innerHTML = '<div class="verdict-clean">Keine Flags ausgelöst. Sauberes Setup nach aktuellem Stand deiner Antworten.</div>';
+    flagsList.innerHTML = '<div class="verdict-clean">No flags triggered. Clean setup based on your current answers.</div>';
   } else {
     nogoFlags.forEach(f=>{
       const d = document.createElement('div');
@@ -2350,14 +2368,14 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
 
   const btn = document.getElementById('saveBtn');
   btn.disabled = true;
-  btn.textContent = 'Speichere...';
+  btn.textContent = 'Saving...';
   try{
     await storageSet('trade:'+entry.ts, JSON.stringify(entry));
-    btn.textContent = 'Gespeichert ✓';
-    setTimeout(()=>{ btn.textContent='Im Journal speichern'; btn.disabled=false; }, 1200);
+    btn.textContent = 'Saved ✓';
+    setTimeout(()=>{ btn.textContent='Save to Journal'; btn.disabled=false; }, 1200);
     loadJournal();
   }catch(e){
-    btn.textContent = 'Fehler — erneut versuchen';
+    btn.textContent = 'Error — try again';
     btn.disabled = false;
   }
 });
