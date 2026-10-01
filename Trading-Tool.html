@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Trade-Freigabe // Pre-Trade Checkliste</title>
+<title>Trade Approval // Trade-Check-Tool</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -399,7 +399,7 @@
     border-radius: 3px;
   }
 
-  /* Mobile: größere Tap-Flächen und etwas mehr Luft, damit man das Tool mit dem Daumen bedienen kann */
+  /* Mobile: bigger tap targets and a bit more breathing room so the tool is easy to use with your thumb */
   /* Trading Plan tab */
   .tp-subsection{
     padding: 16px 0;
@@ -665,7 +665,7 @@
 
   <div class="tabs">
     <div class="tab active" data-page="home">Home</div>
-    <div class="tab" data-page="pretrade">Pre-Trade Checklist</div>
+    <div class="tab" data-page="pretrade">Trade-Check-Tool</div>
     <div class="tab" data-page="tradingplan">Trading Plan</div>
     <div class="tab" data-page="management">In-Trade Management</div>
     <div class="tab" data-page="pullorder">Pull Order Check</div>
@@ -691,11 +691,18 @@
 
   <div class="page" id="pretradePage">
 
-    <h1>Trade-Freigabe</h1>
-    <p class="sub">Richtung → Pattern → Timeframe wählen, dann die 11 Fragen ehrlich beantworten. Rot = klarer Ausschlussgrund. Gelb = kein Ausschluss, aber Grund zum genauen Hinsehen.</p>
+    <h1>Trade-Check-Tool</h1>
+    <p class="sub">Pick asset → direction → pattern → timeframe, then answer the questions honestly. Red = clear reason to skip. Yellow = not a dealbreaker, but worth a closer look.</p>
+
+    <div id="checkToolSection">
 
     <div class="panel">
-      <div class="panel-label">Richtung</div>
+      <div class="panel-label">Asset</div>
+      <div class="row" id="assetRow"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-label">Direction</div>
       <div class="row" id="dirRow">
         <div class="chip dir" data-dir="long">Long</div>
         <div class="chip dir" data-dir="short">Short</div>
@@ -716,23 +723,25 @@
     </div>
 
     <div class="panel" id="qPanel" style="display:none;">
-      <div class="panel-label">Checkliste</div>
+      <div class="panel-label">Checklist</div>
       <div id="qcontainer"></div>
     </div>
 
     <div class="panel" id="notesPanel" style="display:none;">
-      <div class="panel-label">Notiz (optional)</div>
+      <div class="panel-label">Note (optional)</div>
       <textarea id="notes" placeholder="Symbol, chart context, observations..."></textarea>
     </div>
 
     <div class="verdict" id="verdict" style="display:none;">
-      <div class="verdict-label">Ergebnis</div>
+      <div class="verdict-label">Result</div>
       <div class="verdict-value" id="verdictValue">—</div>
       <div class="flags" id="flagsList"></div>
       <div class="actions">
-        <button class="btn primary" id="saveBtn">Save to Journal</button>
-        <button class="btn" id="resetBtn">Zurücksetzen</button>
+        <button class="btn primary" id="makePlanBtn">Make the Plan →</button>
+        <button class="btn" id="resetBtn">Reset</button>
       </div>
+    </div>
+
     </div>
 
     <div class="panel" id="journalPanel" style="display:none;">
@@ -742,7 +751,7 @@
 
     <div class="panel" id="journalDetailPanel" style="display:none;">
       <div class="actions" style="justify-content:flex-start; margin-bottom:16px;">
-        <button class="btn" id="journalDetailBack">← Zurück zum Journal</button>
+        <button class="btn" id="journalDetailBack">← Back to Journal</button>
       </div>
       <div id="journalDetailHead"></div>
       <div id="journalDetailBody"></div>
@@ -753,12 +762,18 @@
   <div class="page" id="managementPage">
 
     <h1>In-Trade Management</h1>
-    <p class="sub">Sobald du drin bist. Keine Bewertung, keine Auswahl nötig — einfach abarbeiten, während der Trade läuft. Haken bleiben stehen, bis du sie zurücksetzt.</p>
+    <p class="sub">Once you’re in. No rating, no choices needed — just work through it while the trade is running. Checkmarks stay until you reset them.</p>
 
     <div class="panel">
+      <div class="panel-label">Open Trades</div>
+      <div class="row" id="mgmtTradeRow"></div>
+    </div>
+
+    <div class="panel" id="mgmtChecklistPanel" style="display:none;">
       <div id="mgmtBigList"></div>
       <div class="actions" style="justify-content:flex-start; margin-top:18px;">
-        <button class="btn" id="mgmtResetBtn">Zurücksetzen</button>
+        <button class="btn" id="mgmtResetBtn">Reset Checklist</button>
+        <button class="btn" id="mgmtCloseTradeBtn">Close Trade</button>
       </div>
     </div>
 
@@ -767,7 +782,7 @@
   <div class="page" id="pullorderPage">
 
     <h1>Pull Order Check</h1>
-    <p class="sub">Bevor du eine Order löschst — kurz den echten Grund checken. Manche Gründe sind legitim, manche sind nur ein Reflex.</p>
+    <p class="sub">Before you pull an order — take a second to check the real reason. Some reasons are legit, some are just a reflex.</p>
 
     <div class="panel">
       <div class="panel-label">Why do you want to pull this order?</div>
@@ -779,7 +794,7 @@
       <div id="pullFollowupContainer"></div>
       <div class="actions" style="justify-content:flex-start; margin-top:16px;">
         <button class="btn primary" id="pullLogBtn">Save to Log</button>
-        <button class="btn" id="pullResetBtn">Zurücksetzen</button>
+        <button class="btn" id="pullResetBtn">Reset</button>
       </div>
     </div>
 
@@ -850,7 +865,7 @@
   <div class="page" id="rememberPage">
 
     <h1>Things to Remember</h1>
-    <p class="sub">Dein Fundament — ändert sich selten, ist aber immer griffbereit.</p>
+    <p class="sub">Your foundation — changes rarely, but always within reach.</p>
 
     <div class="panel">
       <div class="tp-subsection">
@@ -929,9 +944,9 @@ async function hasFirestore(){
 }
 
 /* ---------- Storage abstraction ---------- */
-/* Reihenfolge: Firestore (geräteübergreifend, dein Firebase-Account) → window.storage
-   (funktioniert innerhalb der Claude-Oberfläche) → localStorage (lokaler Fallback,
-   z.B. wenn Firestore/Netzwerk gerade nicht erreichbar ist). */
+/* Order: Firestore (cross-device, your Firebase account) → window.storage
+   (works inside the Claude interface) → localStorage (local fallback,
+   e.g. when Firestore/network isn't reachable right now). */
 function hasClaudeStorage(){
   return typeof window.storage !== 'undefined' && window.storage;
 }
@@ -990,15 +1005,19 @@ async function storageGet(key){
 }
 
 /* ---------- Tab navigation ---------- */
+const TAB_LABELS = { home:'HOME', pretrade:'TRADE-CHECK-TOOL', management:'IN-TRADE MANAGEMENT', pullorder:'PULL ORDER CHECK', tradingplan:'TRADING PLAN', remember:'THINGS TO REMEMBER' };
+
+function switchToPage(pageKey){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  const tab = document.querySelector('.tab[data-page="'+pageKey+'"]');
+  if(tab) tab.classList.add('active');
+  document.getElementById(pageKey + 'Page').classList.add('active');
+  document.getElementById('tickerLabel').textContent = TAB_LABELS[pageKey];
+}
+
 document.querySelectorAll('.tab').forEach(tab=>{
-  tab.addEventListener('click', ()=>{
-    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-    document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById(tab.dataset.page + 'Page').classList.add('active');
-    const labels = { home:'HOME', pretrade:'PRE-TRADE ASSESSMENT', management:'IN-TRADE MANAGEMENT', pullorder:'PULL ORDER CHECK', tradingplan:'TRADING PLAN', remember:'THINGS TO REMEMBER' };
-    document.getElementById('tickerLabel').textContent = labels[tab.dataset.page];
-  });
+  tab.addEventListener('click', ()=> switchToPage(tab.dataset.page));
 });
 
 /* ---------- Pattern definitions ---------- */
@@ -1017,6 +1036,9 @@ const PATTERNS = {
     { id:'level_reclaim', label:'Level Reclaim', group:'levelreclaim' },
     { id:'lhpb', label:'LHPB', group:'lhpb' },
     { id:'llpb', label:'LLPB', group:'llpb' },
+    { id:'lhpb_inverted', label:'LHPB (Inverted)', group:'lhpb_inverted' },
+    { id:'llpb_inverted', label:'LLPB (Inverted)', group:'llpb_inverted' },
+    { id:'pattern_failure', label:'Pattern Failure', group:'pattern_failure' },
   ],
   short: [
     { id:'bear_engulf', label:'Bearish Engulfing', group:'engulfing' },
@@ -1032,6 +1054,9 @@ const PATTERNS = {
     { id:'level_rejection', label:'Level Rejection', group:'levelrejection' },
     { id:'lhpb', label:'LHPB', group:'lhpb' },
     { id:'llpb', label:'LLPB', group:'llpb' },
+    { id:'lhpb_inverted', label:'LHPB (Inverted)', group:'lhpb_inverted' },
+    { id:'llpb_inverted', label:'LLPB (Inverted)', group:'llpb_inverted' },
+    { id:'pattern_failure', label:'Pattern Failure', group:'pattern_failure' },
   ]
 };
 
@@ -1051,10 +1076,14 @@ const ENTRY_OPTIONS = {
   levelrejection: ['Rejected Level','Retest of Rejected Level','1h Level'],
   lhpb: ['LHPB Level','Retest of LHPB Level','1h Level'],
   llpb: ['LLPB Level','Retest of LLPB Level','1h Level'],
+  lhpb_inverted: ['LHPB (Inverted) Level','Retest of LHPB (Inverted) Level','1h Level'],
+  llpb_inverted: ['LLPB (Inverted) Level','Retest of LLPB (Inverted) Level','1h Level'],
+  pattern_failure: ['Level of Failed Pattern','Retest of Failed Pattern Level','1h Level'],
 };
 
 const ZONE_OPTIONS = ['Weekly zone or level','Daily zone or level','Daily LHPB/LLPB','Daily LHPB/LLPB inverted','0.382','0.5','0.618','EMA12','EMA24','H&S','H&S Fail','None of these'];
 const ZONE_NONE_LABEL = 'None of these';
+const ASSET_LIST = ['BTC','BNB','ETH','SOL','XAU','XAG','AUD','EUR','NQ','S&P','ES','DAX','EUSTX50'];
 
 const SCALE5 = ['Very good','Good','Neutral','Bad','Very bad'];
 const SCALE5_PATIENCE = ['Very patient','Patient','Neutral','Impatient','Very impatient'];
@@ -1108,6 +1137,15 @@ const CANDLE_CHECKS = {
     { type:'text', id:'cc_ssf_validfail', title:'Is it a valid fail?', placeholder:'Short note...', hint:'Did price close back above the shooting star\u2019s high, confirming the fail — or did it just wick through and reclaim back inside its range?' },
     { type:'choice', id:'cc_ssf_momentum', title:'Did the break above the high come with strong momentum, or does it look like a weak poke through?', options:['Strong momentum','Weak poke'], ideal:['Strong momentum'] },
   ],
+  /* Generic catch-all for a pattern failing that doesn't have its own named failed-variant yet
+     (e.g. H&S Fail). Same shape as the other failed-pattern checks: is the fail itself valid, and
+     did it come with real momentum. */
+  pattern_failure: [
+    { type:'choice', id:'cc_pf_type', title:'Does it happen as a reversal, continuation, or in a range?', options:['Reversal','Continuation','Range'], ideal:['Reversal'], hint:'You don\u2019t want the range or continuation scenario.' },
+    { type:'text', id:'cc_pf_whatpattern', title:'Which pattern failed?', placeholder:'e.g. H&S, Trendline, Range...' },
+    { type:'text', id:'cc_pf_validfail', title:'Is it a valid fail?', placeholder:'Short note...', hint:'Did price actually break the level that defined the pattern, or did it just wick through and reclaim back inside its range?' },
+    { type:'choice', id:'cc_pf_momentum', title:'Did the break come with strong momentum, or does it look like a weak poke through?', options:['Strong momentum','Weak poke'], ideal:['Strong momentum'] },
+  ],
 };
 
 /* Maps a specific pattern id to which candle-check set applies. Every failed pattern gets its own
@@ -1123,6 +1161,7 @@ const PATTERN_TO_CANDLECHECK = {
   failed_hammer: 'hammer_failed',
   shootingstar: 'shootingstar',
   failed_shootingstar: 'shootingstar_failed',
+  pattern_failure: 'pattern_failure',
 };
 
 const UNIVERSAL_REMINDERS = [
@@ -1134,7 +1173,27 @@ const UNIVERSAL_REMINDERS = [
 const BIAS_CHECK = { type:'choice', id:'cc_bias', title:'Does your planned entry still go with your bias if price reaches that level? Daily bias? 1h bias?', options:['Still fits','Would have to flip'], ideal:['Still fits'], hint:'Reminder only — but if this flips, it likely deserves a proper second look, not just a note. E.g. structure on the 1h changes from bearish to bullish.' };
 
 /* ---------- State ---------- */
-let state = { dir:null, patterns:[], tf:null, answers:{}, mgmt:{}, pullReason:null, pullAnswer:null };
+let state = { asset:null, dir:null, patterns:[], tf:null, answers:{}, mgmt:{}, pullReason:null, pullAnswer:null };
+
+/* ---------- Step 0: Asset ---------- */
+function renderAssetRow(){
+  const row = document.getElementById('assetRow');
+  row.innerHTML = '';
+  ASSET_LIST.forEach(sym=>{
+    const el = document.createElement('div');
+    el.className = 'chip asset';
+    el.textContent = sym;
+    el.dataset.asset = sym;
+    if(state.asset===sym) el.classList.add('active');
+    el.addEventListener('click', ()=>{
+      state.asset = sym;
+      row.querySelectorAll('.chip.asset').forEach(c=>c.classList.remove('active'));
+      el.classList.add('active');
+    });
+    row.appendChild(el);
+  });
+}
+renderAssetRow();
 
 /* ---------- Step 1: Direction ---------- */
 document.querySelectorAll('.chip.dir').forEach(el=>{
@@ -1210,7 +1269,13 @@ function renderQuestions(){
   let n = 1;
   const N = ()=> n++;
 
-  /* 1) CANDLE SHAPE — what does the candle actually look like, before anything else */
+  /* 1) SETUP & VALIDITY — is this even a real, already-valid setup before anything else gets checked */
+  c.appendChild(sectionDivider('Setup & Validity'));
+  c.appendChild(buildTextNote('q1', N()+'. Where does the setup happen?', 'e.g. Weekly Zone, Daily LHPB/LLPB, 0.618, EMA24, H&S...', 'Name the zone/level where the setup happens. Leaving this empty counts as a reason to skip the trade — there should always be a nameable structural reason.'));
+  c.appendChild(buildYesNo('q_valid', N()+'. Is this setup already valid right now?', 'no', 'nogo', 'Valid', 'Not yet', 'E.g. has the Daily close actually happened yet? If a thrust candle is involved, has it closed — unless it\'s at a very key high/low, an in-progress thrust doesn\'t confirm the bias yet.'));
+  c.appendChild(buildYesNo('q_extreme', N()+'. Is this happening at a structural extreme, not in the middle of a range?', 'no', 'wait', null, null, 'Especially relevant for Inside Day/Week Failures — these only mean something at the edges of a range, not in the middle of it.'));
+
+  /* 2) CANDLE SHAPE — what does the candle actually look like */
   const ccKeys = [...new Set(currentPatterns().map(p=>PATTERN_TO_CANDLECHECK[p.id]).filter(Boolean))];
   if(ccKeys.length>0){
     c.appendChild(sectionDivider('Candle Shape', 'Reminder — no impact on the result'));
@@ -1219,39 +1284,33 @@ function renderQuestions(){
     });
   }
 
-  /* 2) LOCATION & STRUCTURE — where does it happen, is the level worth anything */
-  c.appendChild(sectionDivider('Location & Structure'));
-  c.appendChild(buildTextNote('q1', N()+'. Where does the setup happen?', 'e.g. Weekly Zone, Daily LHPB/LLPB, 0.618, EMA24, H&S...', 'Name the zone/level where the setup happens. Leaving this empty counts as a reason to skip the trade — there should always be a nameable structural reason.'));
+  /* 3) LEVEL & CONFLUENCE — is the level itself worth anything */
+  c.appendChild(sectionDivider('Level & Confluence'));
   c.appendChild(buildYesNo('q10', N()+'. Is the level you are planning to buy/sell an untouched previous support or resistance?', 'no', 'wait', null, null, 'Necessary for a limit order. If not, wait for price action at that level.'));
   c.appendChild(buildChoice('q_levelrating', N()+'. How would you rate the level you are trading on your 1-3 scale?', ['1','2','3'], ['3'], 'Check for inflection points, Fibs, ATR, recent respect of the level, aggressiveness of the reactions from it.'));
+  c.appendChild(buildTextNote('q_recent1h', N()+'. What\'s the most recent 1h high/low close to your level?', 'Short note...', 'Recency counts, but it\'s not the only factor — double-check it against the quality/significance of that level too, so you don\'t miss good entries by a small margin.'));
+  c.appendChild(buildReminderItem(UNIVERSAL_REMINDERS.find(q=>q.id==='cc_confluence'), N()));
 
-  /* 3) KONTEXT — macro check before diving into the technical detail */
-  c.appendChild(sectionDivider('Context'));
+  /* 4) INTERFERENCE & CONTEXT — anything around that could mess with the idea, news, and how price has been behaving */
+  c.appendChild(sectionDivider('Interference & Context'));
   c.appendChild(buildYesNo('q_news', N()+'. Did you check for News Events?', 'no', 'wait', null, null, 'News events can invalidate even a clean technical setup — always worth a quick check before you\u2019re in.'));
-
-  /* 4) LEVEL INTERFERENCE — anything around that could mess with the idea */
-  c.appendChild(sectionDivider('Level Interference'));
   c.appendChild(buildYesNoText('q2', N()+'. Other levels or candles that are contrary to this setup? Check on the daily and weekly.', 'If yes — which one?', 'nogo', '(e.g. an opposing Hammer or Engulfing forming against you on other timeframes — e.g. thrust of a Hammer running into a daily level.)'));
   c.appendChild(buildYesNoText('q3', N()+'. Did you mark out other levels that could cause trouble or invalidate the setup?', 'If yes, which ones?', 'wait', 'Not a red flag, but be aware in terms of your target — be ready to change target, tighten stops, or close early. Set an alarm at these levels.', 'no'));
   c.appendChild(buildYesNoText('q4', N()+'. Are there more interesting entry levels higher/lower from where you are planning to enter?', 'If yes, which ones?', 'wait', 'Squeezes happen, stay patient. Squeezes happen more often than you think — better to miss a trade than take a loser.'));
-
-  /* 5) PRICE BEHAVIOR — how has price actually been acting around this setup */
-  c.appendChild(sectionDivider('Price Behavior'));
   c.appendChild(buildYesNo('q5', N()+'. Did price come close to your target already?', 'yes', 'wait', null, null, 'Not necessarily a red flag, but have another look — you might want to reevaluate.'));
   c.appendChild(buildYesNo('q6', N()+'. Is it a clear setup or are you getting mixed signals?', 'no', 'nogo', 'Clear setup', 'Mixed signals', 'If it\'s not clear, stay out. Check other assets — there might be better trades than this one. Mixed signal could be conflicting biases, e.g. daily bias bullish but 1h bias bearish.'));
   c.appendChild(buildYesNo('q7', N()+'. Did price come close to your entry already and reacted from it?', 'yes', 'wait', null, null, 'You might want to pull this order! The trapped traders you are betting on might already be out of their trades.'));
   c.appendChild(buildYesNo('q8', N()+'. Is there developing S/R PA on the 1h close to your entry?', 'yes', 'wait', null, null, 'Check if your R:R is still worth it. You prefer price coming strongly into your level and reacting from it — staircase PA building a new level in front of your entry is a warning sign.'));
   c.appendChild(buildReminderItem(BIAS_CHECK, N()));
-
-  /* 6) ENTRY & CONFLUENCE — the actual fill and last sanity checks around it */
-  c.appendChild(sectionDivider('Entry & Confluence'));
   c.appendChild(buildTextNote('q9', N()+'. At which level are you planning to enter?', entryLevelPlaceholder(), 'Should be clear here too!'));
-  UNIVERSAL_REMINDERS.forEach(q=> c.appendChild(buildReminderItem(q, N())));
 
-  /* 7) MINDSET — always last */
+  /* 5) MINDSET — always last */
   c.appendChild(sectionDivider('Mindset'));
   c.appendChild(buildScale('q11', N()+'. How are you feeling about this trade?', SCALE5, {2:'wait', 3:'nogo', 4:'nogo'}));
+  c.appendChild(buildTextNote('q_forcing', N()+'. How would you feel if this trade goes wrong?', 'Short note...', 'Is it okay right now, or are you forcing it for some reason?'));
   c.appendChild(buildScale('q12', N()+'. Are you being patient or are you forcing trades?', SCALE5_PATIENCE, {2:'wait', 3:'nogo', 4:'nogo'}));
+  c.appendChild(buildReminderItem(UNIVERSAL_REMINDERS.find(q=>q.id==='cc_time'), N()));
+  c.appendChild(buildReminderItem(UNIVERSAL_REMINDERS.find(q=>q.id==='cc_trade_story'), N()));
 
   updateVerdict();
 }
@@ -1311,9 +1370,59 @@ function buildTextNote(id, title, placeholder, hint){
   return wrap;
 }
 
+/* In-Trade Management is per trade, not global: mgmtByTrade keys each asset's checklist
+   state by its plan-asset id, so managing Trade A doesn't touch Trade B's checkmarks. */
+let mgmtByTrade = {};
+let selectedMgmtTradeId = null;
+
+async function loadMgmtByTrade(){
+  try{
+    const r = await storageGet('mgmt:bytrade');
+    if(r && r.value) mgmtByTrade = JSON.parse(r.value);
+  }catch(e){}
+}
+function saveMgmtByTrade(){
+  storageSet('mgmt:bytrade', JSON.stringify(mgmtByTrade)).catch(()=>{});
+}
+
+function openTrades(){
+  return state_wp.assets.filter(a=>a.status==='in-trade');
+}
+
 function renderManagement(){
+  const row = document.getElementById('mgmtTradeRow');
+  const checklistPanel = document.getElementById('mgmtChecklistPanel');
+  if(!row || !checklistPanel) return;
+  row.innerHTML = '';
+
+  const trades = openTrades();
+  if(trades.length===0){
+    selectedMgmtTradeId = null;
+    row.innerHTML = '<div class="empty-hint">No trades in progress — take a trade from the Trading Plan first.</div>';
+    checklistPanel.style.display = 'none';
+    return;
+  }
+
+  if(!selectedMgmtTradeId || !trades.find(t=>t.id===selectedMgmtTradeId)){
+    selectedMgmtTradeId = trades[0].id;
+  }
+
+  trades.forEach(t=>{
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.textContent = t.asset + (t.bias ? ' · '+t.bias : '');
+    if(t.id===selectedMgmtTradeId) chip.classList.add('active');
+    chip.addEventListener('click', ()=>{
+      selectedMgmtTradeId = t.id;
+      renderManagement();
+    });
+    row.appendChild(chip);
+  });
+
+  checklistPanel.style.display = 'block';
   const list = document.getElementById('mgmtBigList');
   list.innerHTML = '';
+  const tradeState = mgmtByTrade[selectedMgmtTradeId] || (mgmtByTrade[selectedMgmtTradeId] = {});
   MANAGEMENT_ITEMS.forEach((m, idx)=>{
     const wrap = document.createElement('div');
     wrap.className = 'qblock';
@@ -1323,10 +1432,11 @@ function renderManagement(){
     const opt = document.createElement('div');
     opt.className = 'opt';
     opt.textContent = 'Done';
-    if(state.mgmt[m.id] === 'Done') opt.classList.add('selected');
+    if(tradeState[m.id] === 'Done') opt.classList.add('selected');
     opt.addEventListener('click', ()=>{
       const isDone = opt.classList.toggle('selected');
-      state.mgmt[m.id] = isDone ? 'Done' : null;
+      tradeState[m.id] = isDone ? 'Done' : null;
+      saveMgmtByTrade();
     });
     optRow.appendChild(opt);
     wrap.appendChild(optRow);
@@ -1335,11 +1445,23 @@ function renderManagement(){
 }
 
 document.getElementById('mgmtResetBtn').addEventListener('click', ()=>{
-  state.mgmt = {};
+  if(!selectedMgmtTradeId) return;
+  mgmtByTrade[selectedMgmtTradeId] = {};
+  saveMgmtByTrade();
   renderManagement();
 });
 
-renderManagement();
+document.getElementById('mgmtCloseTradeBtn').addEventListener('click', ()=>{
+  if(!selectedMgmtTradeId) return;
+  state_wp.assets = state_wp.assets.filter(x=>x.id!==selectedMgmtTradeId);
+  delete mgmtByTrade[selectedMgmtTradeId];
+  selectedMgmtTradeId = null;
+  saveWeekPlan();
+  saveMgmtByTrade();
+  renderManagement();
+});
+
+/* renderManagement() is called later, after state_wp and mgmtByTrade are loaded (see init chain at bottom of script) */
 
 /* ---------- Pull Order Check ---------- */
 const PULL_REASONS = [
@@ -1467,7 +1589,7 @@ function renderPullLog(entries){
   const list = document.getElementById('pullLogList');
   panel.style.display = 'block';
   if(entries.length===0){
-    list.innerHTML = '<div class="empty-journal">Noch keine gelöschten Orders geloggt.</div>';
+    list.innerHTML = '<div class="empty-journal">No pulled orders logged yet.</div>';
     return;
   }
   list.innerHTML = '';
@@ -1491,7 +1613,6 @@ loadPullLog();
 
 /* ================= TRADING PLAN TAB ================= */
 
-const ASSET_LIST = ['BTC','BNB','ETH','SOL','XAU','XAG','AUD','EUR','NQ','S&P','ES','DAX'];
 
 const D1_PATTERNS = [
   'Hammer','Shooting Star','Bullish Engulfing','Bearish Engulfing',
@@ -1521,7 +1642,7 @@ const PLAYBOOK_DEFAULTS = {
 
 let state_pb = {};
 let state_wp = { weekStart: null, events: [], assets: [] };
-let state_checkin = { calendar:null, wentWell:'', wentBad:'', followedPlan:null };
+let state_checkin = { calendar:null };
 
 /* ---- Playbook ---- */
 async function loadPlaybook(){
@@ -1590,9 +1711,9 @@ async function loadWeekPlan(){
       state_wp = JSON.parse(r.value);
     } else {
       // No document found — just show it empty locally, do NOT save immediately.
-      // Erst wenn der Nutzer wirklich etwas einträgt, wird über die normalen
-      // Save-Aufrufe geschrieben. So kann ein kurzer Lese-Aussetzer nie echte
-      // Daten in Firestore überschreiben.
+      // Only once the user actually enters something does it get written via the
+      // normal save calls. That way a brief read hiccup can never overwrite real
+      // data in Firestore.
       state_wp = { weekStart: getMonday(new Date()).toISOString(), events: [], assets: [] };
     }
   }catch(e){
@@ -1632,32 +1753,34 @@ function renderWeeklyOverview(){
   state_wp.assets.forEach(a=>{
     const card = document.createElement('div');
     card.className = 'wo-card';
+    const inTrade = a.status === 'in-trade';
 
     const biasClass = a.bias==='Bullish' ? 'bullish' : (a.bias==='Bearish' ? 'bearish' : 'none');
     const head = document.createElement('div');
     head.className = 'wo-card-head';
-    head.innerHTML = `<span class="wo-asset">${escapeHtml(a.asset)}</span><span class="wo-bias ${biasClass}">${a.bias || 'No Bias'}</span>`;
+    head.innerHTML = `<span class="wo-asset">${escapeHtml(a.asset)}</span><span class="wo-bias ${biasClass}">${a.bias || 'No Bias'}</span>` + (inTrade ? `<span class="wo-bias" style="background:var(--go-dim); color:var(--go);">In Trade</span>` : '');
     const spacer = document.createElement('span');
     spacer.style.flex = '1';
     head.appendChild(spacer);
-    const editBtn = document.createElement('button');
-    editBtn.className = 'btn';
-    editBtn.style.cssText = 'font-size:11px; padding:5px 9px;';
-    editBtn.textContent = 'Edit';
-    editBtn.addEventListener('click', ()=> editAssetFromOverview(a.id));
-    head.appendChild(editBtn);
-    const removeBtn = document.createElement('button');
-    removeBtn.className = 'remove-btn';
-    removeBtn.style.cssText = 'font-size:11px; padding:5px 9px;';
-    removeBtn.textContent = 'Remove';
-    removeBtn.addEventListener('click', ()=> removeAssetFromOverview(a.id));
-    head.appendChild(removeBtn);
+    if(!inTrade){
+      const editBtn = document.createElement('button');
+      editBtn.className = 'btn';
+      editBtn.style.cssText = 'font-size:11px; padding:5px 9px;';
+      editBtn.textContent = 'Edit';
+      editBtn.addEventListener('click', ()=> editAssetFromOverview(a.id));
+      head.appendChild(editBtn);
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'remove-btn';
+      removeBtn.style.cssText = 'font-size:11px; padding:5px 9px;';
+      removeBtn.textContent = 'Remove';
+      removeBtn.addEventListener('click', ()=> removeAssetFromOverview(a.id));
+      head.appendChild(removeBtn);
+    }
     card.appendChild(head);
 
     const rows = [
       ['Buy', a.buyLevel, a.buyWhy],
       ['Sell', a.sellLevel, a.sellWhy],
-      ['Add to trade?', a.addToTrade, null],
       ['Trouble areas', a.troubleAreas, null],
     ];
     rows.forEach(([k, v, why])=>{
@@ -1670,6 +1793,19 @@ function renderWeeklyOverview(){
       card.appendChild(row);
     });
 
+    if(!inTrade){
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      actions.style.cssText = 'justify-content:flex-start; margin-top:12px;';
+      const takeBtn = document.createElement('button');
+      takeBtn.className = 'btn primary';
+      takeBtn.style.cssText = 'font-size:12px; padding:7px 12px;';
+      takeBtn.textContent = 'Took the Trade →';
+      takeBtn.addEventListener('click', ()=> takeTradeFromOverview(a.id));
+      actions.appendChild(takeBtn);
+      card.appendChild(actions);
+    }
+
     wrap.appendChild(card);
   });
 }
@@ -1679,7 +1815,7 @@ function renderEvents(){
   const list = document.getElementById('eventsList');
   list.innerHTML = '';
   if(state_wp.events.length===0){
-    list.innerHTML = '<div class="empty-hint">Noch keine Events eingetragen.</div>';
+    list.innerHTML = '<div class="empty-hint">No events entered yet.</div>';
   }
   state_wp.events.forEach((ev, idx)=>{
     const row = document.createElement('div');
@@ -1720,7 +1856,12 @@ function newAssetDraft(){
     bias: null,
     buyLevel:'', buyWhy:'',
     sellLevel:'', sellWhy:'',
-    addToTrade:'', troubleAreas:''
+    troubleAreas:'',
+    status: 'planned',
+    /* Carries the full Trade-Check result over from "Make the Plan", so it isn't lost by
+       the time the trade is actually taken (could be hours or days later): direction,
+       pattern, timeframe, verdict, the full question/answer list, and the check notes. */
+    checkSnapshot: null
   };
 }
 
@@ -1779,7 +1920,12 @@ function renderAssetForm(){
       a.bias = val;
       biasRow.querySelectorAll('.opt').forEach(o=>o.classList.remove('selected'));
       opt.classList.add('selected');
+      /* A bullish plan only needs the buy side, a bearish plan only the sell side —
+         the unused side gets a "-" so it reads as deliberately skipped, not forgotten. */
+      if(val==='Bullish'){ a.sellLevel='-'; a.sellWhy='-'; }
+      else if(val==='Bearish'){ a.buyLevel='-'; a.buyWhy='-'; }
       saveDraft();
+      renderAssetForm();
     });
     biasRow.appendChild(opt);
   });
@@ -1790,8 +1936,7 @@ function renderAssetForm(){
   container.appendChild(tpFieldRow('Why (buy level)', a.buyWhy, v=>{ a.buyWhy=v; }, true));
   container.appendChild(tpFieldRow('Level to sell', a.sellLevel, v=>{ a.sellLevel=v; }));
   container.appendChild(tpFieldRow('Why (sell level)', a.sellWhy, v=>{ a.sellWhy=v; }, true));
-  container.appendChild(tpFieldRow('Will you add to the trade?', a.addToTrade, v=>{ a.addToTrade=v; }));
-  container.appendChild(tpFieldRow('Trouble areas on the way to your target', a.troubleAreas, v=>{ a.troubleAreas=v; }, true));
+  container.appendChild(tpFieldRow('What are the Trouble Areas you are watching? Would you consider entering there if you miss your entry or add to your trade?', a.troubleAreas, v=>{ a.troubleAreas=v; }, true));
 }
 
 document.getElementById('addAssetBtn').addEventListener('click', async ()=>{
@@ -1800,7 +1945,7 @@ document.getElementById('addAssetBtn').addEventListener('click', async ()=>{
   state_wp.assets.push(entry);
   btn.disabled = true;
   const oldLabel = btn.textContent;
-  btn.textContent = 'Hinzugefügt ✓';
+  btn.textContent = 'Added ✓';
   await saveWeekPlan();
   setTimeout(()=>{ btn.textContent = oldLabel; btn.disabled = false; }, 1000);
 
@@ -1838,6 +1983,46 @@ function editAssetFromOverview(id){
 function removeAssetFromOverview(id){
   state_wp.assets = state_wp.assets.filter(x=>x.id!==id);
   saveWeekPlan();
+}
+
+/* Marks a planned asset as taken and starts its journal entry, pre-filled with everything
+   the plan and the original Trade-Check (if there was one) already know — asset, bias,
+   levels, trouble areas, and the full check verdict/answers. */
+function takeTradeFromOverview(id){
+  const a = state_wp.assets.find(x=>x.id===id);
+  if(!a) return;
+  a.status = 'in-trade';
+  saveWeekPlan();
+  renderManagement();
+
+  const snap = a.checkSnapshot || {};
+  const entry = {
+    ts: Date.now(),
+    source: 'plan',
+    planAssetId: a.id,
+    asset: a.asset,
+    bias: a.bias,
+    buyLevel: a.buyLevel, buyWhy: a.buyWhy,
+    sellLevel: a.sellLevel, sellWhy: a.sellWhy,
+    troubleAreas: a.troubleAreas,
+    dirLabel: snap.dirLabel || (a.bias==='Bullish' ? 'Long' : (a.bias==='Bearish' ? 'Short' : '—')),
+    patternLabel: snap.patternLabel || '—',
+    tfLabel: snap.tfLabel || '—',
+    verdict: snap.verdict || '—',
+    verdictClass: snap.verdictClass || 'wait',
+    notes: snap.notes || '',
+    mgmtChecked: 0,
+    mgmtTotal: MANAGEMENT_ITEMS.length,
+    answers: snap.answers || []
+  };
+
+  storageSet('trade:'+entry.ts, JSON.stringify(entry)).then(()=>{
+    loadJournal();
+    switchToPage('pretrade');
+    showJournalDetail(entry);
+  }).catch(()=>{
+    switchToPage('pretrade');
+  });
 }
 
 /* Start New Week */
@@ -1933,9 +2118,6 @@ function renderDailyCheckinForm(){
   }
 
   form.appendChild(choiceField('Did you check the Economic Calendar?', 'calendar'));
-  form.appendChild(textField('What went well today?', 'wentWell'));
-  form.appendChild(textField('What went bad today?', 'wentBad'));
-  form.appendChild(choiceField('Did you follow your plan?', 'followedPlan'));
 }
 
 document.getElementById('saveCheckinBtn').addEventListener('click', async ()=>{
@@ -1947,7 +2129,7 @@ document.getElementById('saveCheckinBtn').addEventListener('click', async ()=>{
     await storageSet('dailycheckin:'+entry.ts, JSON.stringify(entry));
     btn.textContent = 'Saved ✓';
     setTimeout(()=>{ btn.textContent='Save Check-in'; btn.disabled=false; }, 1200);
-    state_checkin = { calendar:null, wentWell:'', wentBad:'', followedPlan:null };
+    state_checkin = { calendar:null };
     renderDailyCheckinForm();
     loadCheckinLog();
   }catch(e){
@@ -1989,11 +2171,10 @@ function renderCheckinLog(entries){
     row.className = 'entry';
     const d = new Date(e.ts);
     const timeStr = d.toLocaleDateString('de-DE') + ' ' + d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
-    const summary = [e.wentWell, e.wentBad].filter(Boolean).join(' · ');
     row.innerHTML = `
       <div class="entry-left">
-        <span class="entry-setup">Calendar: ${e.calendar||'—'} · Followed plan: ${e.followedPlan||'—'}</span>
-        <span class="entry-time">${timeStr}${summary? ' · '+escapeHtml(summary).slice(0,50):''}</span>
+        <span class="entry-setup">Calendar: ${e.calendar||'—'}</span>
+        <span class="entry-time">${timeStr}</span>
       </div>
     `;
     list.appendChild(row);
@@ -2001,7 +2182,10 @@ function renderCheckinLog(entries){
 }
 
 loadPlaybook();
-loadWeekPlan().then(loadCheckinLog);
+Promise.all([loadWeekPlan(), loadMgmtByTrade()]).then(()=>{
+  loadCheckinLog();
+  renderManagement();
+});
 loadAssetDraft();
 renderDailyCheckinForm();
 
@@ -2118,7 +2302,7 @@ function buildDynamicSelect(id, title, hint){
   sel.className='dyn';
   const groups = [...new Set(currentPatterns().map(p=>p.group))];
   const opts = [...new Set(groups.flatMap(g=>ENTRY_OPTIONS[g] || []))];
-  sel.innerHTML = `<option value="">— wählen —</option>` + opts.map(o=>`<option value="${o}">${o}</option>`).join('');
+  sel.innerHTML = `<option value="">— select —</option>` + opts.map(o=>`<option value="${o}">${o}</option>`).join('');
   sel.addEventListener('change', ()=>{
     state.answers[id] = sel.value;
     updateVerdict();
@@ -2157,11 +2341,13 @@ function updateVerdict(){
   const waitFlags = [];
 
   if(!a.q1 || a.q1.trim()==='') nogoFlags.push('No structural context filled in for where the setup happens');
+  if(a.q_valid==='no') nogoFlags.push('Setup is not valid yet — e.g. Daily close hasn\u2019t happened, or a thrust candle is still in progress away from a very key high/low');
   if(a.q2 && a.q2.value==='yes') nogoFlags.push('Price already bouncing/rejecting from a contrary level' + (a.q2.text? ': '+a.q2.text : ''));
   if(a.q6==='no') nogoFlags.push('Mixed signals — not a clean setup');
   if(a.q11===3 || a.q11===4) nogoFlags.push('Feeling about this trade: ' + SCALE5[a.q11].toLowerCase());
   if(a.q12===3 || a.q12===4) nogoFlags.push('Patience: ' + SCALE5_PATIENCE[a.q12].toLowerCase());
 
+  if(a.q_extreme==='no') waitFlags.push('Not happening at a structural extreme — double-check the location, especially for Inside Day/Week Failures');
   if(a.q_news==='no') waitFlags.push('News events not checked yet — worth a quick look before you\u2019re in');
   if(a.q3 && a.q3.value==='no') waitFlags.push('Didn\u2019t mark out other levels that could cause trouble or invalidate the setup — worth doing before you enter (may mean earlier take-profit or a tighter stop)');
   if(a.q4 && a.q4.value==='yes') waitFlags.push('More interesting entry levels higher/lower' + (a.q4.text? ': '+a.q4.text : '') + ' — squeeze risk, stay patient');
@@ -2214,6 +2400,47 @@ document.getElementById('resetBtn').addEventListener('click', ()=>{
   document.getElementById('notes').value='';
 });
 
+/* Hands the check tool's result off to the Trading Plan: pre-fills the asset-draft
+   form with asset, bias, entry level and a short "why" built from the pattern and
+   location, so nothing has to be typed twice. Also keeps a full snapshot of the check
+   (verdict, every question/answer, notes) on the draft, so none of that detail is lost
+   by the time the trade is actually taken and journaled — which can be hours or days later. */
+document.getElementById('makePlanBtn').addEventListener('click', ()=>{
+  const entryLevel = (state.answers.q9 || '').trim();
+  const locationText = (state.answers.q1 || '').trim();
+  const troubleText = (state.answers.q3 && state.answers.q3.text) ? state.answers.q3.text.trim() : '';
+  const whyText = [currentPatternLabel(), locationText ? ('at ' + locationText) : ''].filter(Boolean).join(' ');
+
+  const verdictEl = document.getElementById('verdict');
+  const verdictValue = document.getElementById('verdictValue').textContent;
+  const verdictClass = verdictEl.classList.contains('go') ? 'go' : (verdictEl.classList.contains('wait') ? 'wait' : 'nogo');
+
+  assetDraft = newAssetDraft();
+  assetDraft.asset = state.asset || ASSET_LIST[0];
+  assetDraft.bias = state.dir==='long' ? 'Bullish' : (state.dir==='short' ? 'Bearish' : null);
+  if(state.dir==='long'){
+    assetDraft.buyLevel = entryLevel;
+    assetDraft.buyWhy = whyText;
+  } else if(state.dir==='short'){
+    assetDraft.sellLevel = entryLevel;
+    assetDraft.sellWhy = whyText;
+  }
+  assetDraft.troubleAreas = troubleText;
+  assetDraft.checkSnapshot = {
+    dirLabel: state.dir==='long' ? 'Long' : 'Short',
+    patternLabel: currentPatternLabel(),
+    tfLabel: state.tf==='daily' ? 'Daily' : 'Weekly',
+    verdict: verdictValue,
+    verdictClass: verdictClass,
+    notes: document.getElementById('notes').value,
+    answers: captureAnswersSummary()
+  };
+
+  saveDraft();
+  renderAssetForm();
+  switchToPage('tradingplan');
+});
+
 /* ---------- Journal ---------- */
 async function loadJournal(){
   try{
@@ -2238,7 +2465,7 @@ function renderJournal(entries){
   const list = document.getElementById('journalList');
   panel.style.display='block';
   if(entries.length===0){
-    list.innerHTML = '<div class="empty-journal">Noch keine gespeicherten Checks.</div>';
+    list.innerHTML = '<div class="empty-journal">No saved checks yet.</div>';
     return;
   }
   list.innerHTML='';
@@ -2249,7 +2476,7 @@ function renderJournal(entries){
     const timeStr = d.toLocaleDateString('de-DE') + ' ' + d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
     row.innerHTML = `
       <div class="entry-left">
-        <span class="entry-setup">${e.dirLabel} · ${e.patternLabel} · ${e.tfLabel}</span>
+        <span class="entry-setup">${e.asset? escapeHtml(e.asset)+' · ' : ''}${e.dirLabel} · ${e.patternLabel} · ${e.tfLabel}</span>
         <span class="entry-time">${timeStr}${e.notes? ' · '+escapeHtml(e.notes).slice(0,30):''}${e.mgmtTotal? ' · Mgmt '+e.mgmtChecked+'/'+e.mgmtTotal:''}</span>
       </div>
       <span class="entry-verdict ${e.verdictClass}">${e.verdict}</span>
@@ -2260,6 +2487,7 @@ function renderJournal(entries){
 }
 
 function showJournalDetail(e){
+  document.getElementById('checkToolSection').style.display = 'none';
   document.getElementById('journalPanel').style.display = 'none';
   const detailPanel = document.getElementById('journalDetailPanel');
   detailPanel.style.display = 'block';
@@ -2271,7 +2499,7 @@ function showJournalDetail(e){
   head.innerHTML = `
     <div class="jd-head">
       <div class="jd-head-top">
-        <span class="jd-setup">${e.dirLabel} · ${e.patternLabel} · ${e.tfLabel}</span>
+        <span class="jd-setup">${e.asset? escapeHtml(e.asset)+' · ' : ''}${e.dirLabel} · ${e.patternLabel} · ${e.tfLabel}</span>
         <span class="entry-verdict ${e.verdictClass}">${e.verdict}</span>
       </div>
       <span class="jd-time">${timeStr}</span>
@@ -2280,6 +2508,22 @@ function showJournalDetail(e){
 
   const body = document.getElementById('journalDetailBody');
   body.innerHTML = '';
+
+  /* Plan-sourced fields (from "Took the Trade") — shown first, ahead of the check's
+     question/answer list, since this is what you'll actually glance at during the trade. */
+  const planRows = [
+    ['Buy', e.buyLevel, e.buyWhy],
+    ['Sell', e.sellLevel, e.sellWhy],
+    ['Trouble areas', e.troubleAreas, null],
+  ];
+  planRows.forEach(([label, v, why])=>{
+    if(!v || v==='-') return;
+    const row = document.createElement('div');
+    row.className = 'jd-row';
+    const value = why && why!=='-' ? (v + ' — why: ' + why) : v;
+    row.innerHTML = `<div class="jd-label">${escapeHtml(label)}</div><div class="jd-value">${escapeHtml(value)}</div>`;
+    body.appendChild(row);
+  });
 
   (e.answers || []).forEach(a=>{
     const row = document.createElement('div');
@@ -2292,20 +2536,21 @@ function showJournalDetail(e){
   if(e.notes){
     const row = document.createElement('div');
     row.className = 'jd-row';
-    row.innerHTML = `<div class="jd-label">Notiz</div><div class="jd-value">${escapeHtml(e.notes)}</div>`;
+    row.innerHTML = `<div class="jd-label">Note</div><div class="jd-value">${escapeHtml(e.notes)}</div>`;
     body.appendChild(row);
   }
 
   if(e.mgmtTotal){
     const row = document.createElement('div');
     row.className = 'jd-row';
-    row.innerHTML = `<div class="jd-label">In-Trade Management</div><div class="jd-value">${e.mgmtChecked} / ${e.mgmtTotal} erledigt</div>`;
+    row.innerHTML = `<div class="jd-label">In-Trade Management</div><div class="jd-value">${e.mgmtChecked} / ${e.mgmtTotal} done</div>`;
     body.appendChild(row);
   }
 }
 
 document.getElementById('journalDetailBack').addEventListener('click', ()=>{
   document.getElementById('journalDetailPanel').style.display = 'none';
+  document.getElementById('checkToolSection').style.display = 'block';
   document.getElementById('journalPanel').style.display = 'block';
 });
 
@@ -2344,41 +2589,9 @@ function captureAnswersSummary(){
   });
 }
 
-document.getElementById('saveBtn').addEventListener('click', async ()=>{
-  const verdictEl = document.getElementById('verdict');
-  const verdictValue = document.getElementById('verdictValue').textContent;
-  const verdictClass = verdictEl.classList.contains('go') ? 'go' : (verdictEl.classList.contains('wait') ? 'wait' : 'nogo');
-  const mgmtChecked = Object.values(state.mgmt).filter(v=>v==='Done').length;
-
-  const entry = {
-    ts: Date.now(),
-    dir: state.dir,
-    dirLabel: state.dir==='long' ? 'Long' : 'Short',
-    patterns: [...state.patterns],
-    patternLabel: currentPatternLabel(),
-    tf: state.tf,
-    tfLabel: state.tf==='daily' ? 'Daily' : 'Weekly',
-    verdict: verdictValue,
-    verdictClass: verdictClass,
-    notes: document.getElementById('notes').value,
-    mgmtChecked: mgmtChecked,
-    mgmtTotal: MANAGEMENT_ITEMS.length,
-    answers: captureAnswersSummary()
-  };
-
-  const btn = document.getElementById('saveBtn');
-  btn.disabled = true;
-  btn.textContent = 'Saving...';
-  try{
-    await storageSet('trade:'+entry.ts, JSON.stringify(entry));
-    btn.textContent = 'Saved ✓';
-    setTimeout(()=>{ btn.textContent='Save to Journal'; btn.disabled=false; }, 1200);
-    loadJournal();
-  }catch(e){
-    btn.textContent = 'Error — try again';
-    btn.disabled = false;
-  }
-});
+/* Journal entries are no longer saved directly from the check tool — the next step from
+   here is either "Make the Plan" or "Reset". Journaling starts later, from the trading plan,
+   once a trade is actually taken (see the "Took the Trade" flow). */
 
 /* ---------- Clock ---------- */
 function tickClock(){
