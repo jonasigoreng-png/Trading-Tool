@@ -1780,29 +1780,57 @@ function fmtDuration(ms){
 
 /* Groups journaled trades by one or more keys per trade (keyFn returns an
    array — a trade with several patterns counts toward each of them, a
-   trade with none is simply skipped for that grouping). */
+   trade with none is simply skipped for that grouping). Tracks R, net P&L
+   and — split by win/loss — how long trades in that group stayed open, so
+   every breakdown (by asset, setup, direction, location) can show not just
+   "how much R" but "how it played out over time". */
 function groupStats(rows, keyFn){
   const map = new Map();
+  const durationOf = t=>{
+    const start = t.activeAt, end = t.closeData.closedAtMs;
+    return (start && end && end>start) ? (end-start) : null;
+  };
   rows.forEach(t=>{
     const r = parseFloat((t.closeData.rMultiple||'0').replace(',','.'));
     if(isNaN(r)) return;
+    const net = parseFloat(String(t.closeData.netPnl||'').replace(',','.'));
+    const dur = durationOf(t);
     keyFn(t).forEach(key=>{
       if(!key) return;
-      if(!map.has(key)) map.set(key, { key, count:0, wins:0, totalR:0 });
+      if(!map.has(key)) map.set(key, { key, count:0, wins:0, losses:0, totalR:0, totalNet:0, netCount:0, winDurs:[], lossDurs:[] });
       const g = map.get(key);
       g.count++;
-      if(r>0) g.wins++;
+      if(r>0) g.wins++; else if(r<0) g.losses++;
       g.totalR += r;
+      if(!isNaN(net)){ g.totalNet += net; g.netCount++; }
+      if(dur!=null){
+        if(r>0) g.winDurs.push(dur);
+        else if(r<0) g.lossDurs.push(dur);
+      }
     });
   });
+  const avg = arr => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
   return [...map.values()].map(g=>({
-    ...g,
+    key: g.key,
+    count: g.count,
+    wins: g.wins,
+    losses: g.losses,
     winRate: g.count ? Math.round(100*g.wins/g.count) : 0,
-    avgR: g.count ? g.totalR/g.count : 0
+    totalR: g.totalR,
+    avgR: g.count ? g.totalR/g.count : 0,
+    totalNet: g.totalNet,
+    netCount: g.netCount,
+    avgNet: g.netCount ? g.totalNet/g.netCount : null,
+    avgWinDurationMs: avg(g.winDurs),
+    avgLossDurationMs: avg(g.lossDurs)
   }));
 }
 
-function buildStatTable(title, groups, colLabel){
+/* limit: how many rows to show (sorted by Total R, best first). Pass
+   Infinity for groupings with a naturally small, fixed universe (asset,
+   direction, location) so nothing gets cut off. */
+function buildStatTable(title, groups, colLabel, limit){
+  limit = limit || 8;
   const wrap = document.createElement('div'); wrap.className='panel'; wrap.style.marginTop='14px';
   wrap.innerHTML = `<div class="panel-label">${title}</div>`;
   if(groups.length===0){
@@ -1810,24 +1838,36 @@ function buildStatTable(title, groups, colLabel){
     wrap.appendChild(p);
     return wrap;
   }
+  const tableWrap = document.createElement('div'); tableWrap.className='table-wrap';
   const table = document.createElement('table'); table.className='rv-table';
   table.innerHTML = `<thead><tr>
-    <th>${colLabel}</th><th style="text-align:right;">Trades</th><th style="text-align:right;">Win Rate</th><th style="text-align:right;">Avg R</th><th style="text-align:right;">Total R</th>
+    <th>${colLabel}</th>
+    <th style="text-align:right;">Trades</th>
+    <th style="text-align:right;">Win Rate</th>
+    <th style="text-align:right;">Avg R</th>
+    <th style="text-align:right;">Total R</th>
+    <th style="text-align:right;">Avg Winner Duration</th>
+    <th style="text-align:right;">Avg Loser Duration</th>
+    <th style="text-align:right;">Net P&amp;L</th>
   </tr></thead>`;
   const tbody = document.createElement('tbody');
-  [...groups].sort((a,b)=>b.totalR-a.totalR).slice(0,8).forEach(g=>{
+  [...groups].sort((a,b)=>b.totalR-a.totalR).slice(0,limit).forEach(g=>{
     const tr = document.createElement('tr'); tr.style.cursor='default';
     tr.innerHTML = `
-      <td>${escapeHtml(g.key)}</td>
+      <td>${escapeHtml(g.key)} <span style="color:var(--ink-faint);font-size:11px;">(${g.wins}W / ${g.losses}L)</span></td>
       <td style="text-align:right;">${g.count}</td>
       <td style="text-align:right;">${g.winRate}%</td>
       <td class="rv-r ${g.avgR>=0?'pos':'neg'}" style="text-align:right;">${g.avgR>=0?'+':''}${g.avgR.toFixed(2)}R</td>
       <td class="rv-r ${g.totalR>=0?'pos':'neg'}" style="text-align:right;">${g.totalR>=0?'+':''}${g.totalR.toFixed(2)}R</td>
+      <td style="text-align:right;">${fmtDuration(g.avgWinDurationMs)}</td>
+      <td style="text-align:right;">${fmtDuration(g.avgLossDurationMs)}</td>
+      <td class="rv-r ${g.totalNet>=0?'pos':'neg'}" style="text-align:right;">${g.netCount ? (g.totalNet>=0?'+':'')+g.totalNet.toFixed(2) : '—'}</td>
     `;
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
-  wrap.appendChild(table);
+  tableWrap.appendChild(table);
+  wrap.appendChild(tableWrap);
   return wrap;
 }
 
@@ -1926,13 +1966,13 @@ function renderStats(){
   if(byCombo.length) container.appendChild(buildStatTable('Best Setup Combos', byCombo, 'Combo'));
 
   const byAsset = groupStats(rows, t=> [t.asset]);
-  container.appendChild(buildStatTable('By Asset', byAsset, 'Asset'));
+  container.appendChild(buildStatTable('By Asset', byAsset, 'Asset', Infinity));
 
   const byDir = groupStats(rows, t=> [t.dir==='long'?'Long':'Short']);
-  container.appendChild(buildStatTable('By Direction', byDir, 'Direction'));
+  container.appendChild(buildStatTable('By Direction', byDir, 'Direction', Infinity));
 
   const byLocation = groupStats(rows, t=> (t.check && t.check.whereTags && t.check.whereTags.length) ? t.check.whereTags : []);
-  if(byLocation.length) container.appendChild(buildStatTable('By Location', byLocation, 'Location'));
+  if(byLocation.length) container.appendChild(buildStatTable('By Location', byLocation, 'Location', Infinity));
 }
 
 renderDashboard();
