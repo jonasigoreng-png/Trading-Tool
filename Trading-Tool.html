@@ -380,6 +380,9 @@ input[type=text]:focus, textarea:focus, select:focus{ outline:none; border-color
       <input type="file" id="importFile" accept=".xlsx,.xls" style="display:none;">
     </div>
     <div class="import-status" id="importStatus"></div>
+    <div id="importCleanupRow" style="display:none;margin-top:4px;">
+      <button id="clearImportedBtn" style="background:none;border:none;color:var(--ink-faint);font-family:var(--mono);font-size:11px;text-decoration:underline;cursor:pointer;padding:0;">Remove all imported trades</button>
+    </div>
   </div>
 
   <!-- ============ JOURNEY ============ -->
@@ -671,7 +674,23 @@ let openStage = null;
 --------------------------------------------------------------------- */
 let dragTradeId = null;
 
+/* Shows/updates the small "Remove all imported trades" link under the
+   Import button — only visible when there's something to remove, so it
+   doesn't clutter the UI for anyone who never imports. Used both as a
+   normal cleanup tool and as the fix for accidental duplicate imports
+   (e.g. clicking Import twice before the replace-on-reimport dialog
+   existed). */
+function updateImportCleanupUI(){
+  const row = document.getElementById('importCleanupRow');
+  if(!row) return;
+  const count = trades.filter(t=>t.imported).length;
+  row.style.display = count>0 ? 'block' : 'none';
+  const btn = document.getElementById('clearImportedBtn');
+  if(btn) btn.textContent = `Remove all imported trades (${count})`;
+}
+
 function renderDashboard(){
+  updateImportCleanupUI();
   const cols = document.getElementById('stageCols');
   cols.innerHTML = '';
   if(!tradesLoaded){
@@ -907,6 +926,16 @@ function rowToTrade(row){
 
 document.getElementById('importBtn').addEventListener('click', ()=>{
   document.getElementById('importFile').click();
+});
+document.getElementById('clearImportedBtn').addEventListener('click', ()=>{
+  const count = trades.filter(t=>t.imported).length;
+  if(count===0) return;
+  if(confirm(`Remove all ${count} imported trades? Trades you made yourself in the app are not affected. This can't be undone.`)){
+    trades = trades.filter(t=>!t.imported);
+    persist();
+    renderDashboard();
+    document.getElementById('importStatus').textContent = `Removed ${count} imported trade${count===1?'':'s'}.`;
+  }
 });
 document.getElementById('importFile').addEventListener('change', (e)=>{
   const file = e.target.files[0];
