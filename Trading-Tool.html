@@ -325,8 +325,9 @@ input[type=text]:focus, textarea:focus, select:focus{ outline:none; border-color
 .stat-tile{ background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
 .stat-tile.clickable{ cursor:pointer; transition:border-color .12s, transform .12s; }
 .stat-tile.clickable:hover{ border-color:var(--ink-dim); transform:translateY(-1px); }
-.stat-tile .k{ font-family:var(--mono); font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:6px; }
-.stat-tile .v{ font-family:var(--mono); font-size:19px; font-variant-numeric:tabular-nums; }
+.stat-tile .k{ font-family:var(--mono); font-size:10.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-dim); margin-bottom:7px; }
+.stat-tile .v{ font-family:var(--mono); font-size:21px; font-weight:600; font-variant-numeric:tabular-nums; }
+.stat-tile .v.clickable, .stat-tile.clickable{ cursor:pointer; }
 .stat-tile .v.pos{ color:var(--go); }
 .stat-tile .v.neg{ color:var(--nogo); }
 
@@ -340,17 +341,25 @@ input[type=text]:focus, textarea:focus, select:focus{ outline:none; border-color
 
 .rv-table{ width:100%; border-collapse:collapse; font-size:13px; }
 .rv-table th{
-  text-align:left; font-family:var(--mono); font-size:10.5px; letter-spacing:.05em; text-transform:uppercase;
-  color:var(--ink-faint); padding:8px 10px; border-bottom:1px solid var(--line); font-weight:400;
+  text-align:left; font-family:var(--mono); font-size:11px; letter-spacing:.05em; text-transform:uppercase;
+  color:var(--ink-dim); padding:8px 10px; border-bottom:1px solid var(--line); font-weight:600;
 }
-.rv-table td{ padding:11px 10px; border-bottom:1px solid var(--line-soft); vertical-align:middle; }
+.rv-table td{ padding:11px 10px; border-bottom:1px solid var(--line-soft); vertical-align:middle; color:var(--ink); }
 .rv-table tr{ cursor:pointer; }
 .rv-table tbody tr:hover td{ background:var(--panel-raised); }
 .rv-table .rv-r{ font-family:var(--mono); text-align:right; font-variant-numeric:tabular-nums; }
 .rv-table .rv-r.pos{ color:var(--go); }
 .rv-table .rv-r.neg{ color:var(--nogo); }
+.rv-table .rv-sub{ color:var(--ink-dim); font-size:11.5px; }
 .table-wrap{ overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
 .export-note{ font-size:11.5px; color:var(--ink-faint); margin-top:8px; }
+.stat-highlight{ font-family:var(--mono); font-size:12px; color:var(--ink-dim); margin-top:6px; }
+.filter-chip{
+  display:inline-flex; align-items:center; gap:7px; background:var(--select-dim); border:1px solid var(--select);
+  color:var(--ink); font-family:var(--mono); font-size:12px; padding:5px 6px 5px 11px; border-radius:16px;
+}
+.filter-chip button{ background:none; border:none; color:var(--select); cursor:pointer; font-size:14px; line-height:1; padding:2px 4px; }
+.filter-chip button:hover{ color:var(--ink); }
 </style>
 
 </head>
@@ -1826,9 +1835,39 @@ function escapeHtml(str){ const d=document.createElement('div'); d.textContent=s
 --------------------------------------------------------------------- */
 let reviewFilterAsset = 'all';
 let reviewFilterOutcome = 'all';
+/* One of these at a time — set by clicking through from a Stats table/tile.
+   { type: 'setup'|'combo'|'direction'|'location', value: string } or null. */
+let reviewFilterExtra = null;
 
 function journaledTrades(){
   return trades.filter(t=> t.stage==='closed' && t.journal && t.journal.logged);
+}
+
+/* Jumps straight from a Stats breakdown (a setup, combo, asset, direction or
+   location) into the Journal, pre-filtered to just those trades — "ah, that
+   combo is THIS trade" instead of having to go find it by hand. Asset still
+   goes through the Journal's own asset dropdown since that one already
+   existed; everything else goes through reviewFilterExtra. */
+function openReviewFiltered(type, value){
+  reviewFilterOutcome = 'all';
+  if(type==='asset'){
+    reviewFilterAsset = value;
+    reviewFilterExtra = null;
+  }else{
+    reviewFilterAsset = 'all';
+    reviewFilterExtra = { type, value };
+  }
+  openReview();
+}
+
+function matchesReviewExtra(t){
+  if(!reviewFilterExtra) return true;
+  const { type, value } = reviewFilterExtra;
+  if(type==='setup') return patternsOf(t).includes(value);
+  if(type==='combo') return [...patternsOf(t)].sort().join(' + ')===value;
+  if(type==='direction') return (t.dir==='long'?'Long':'Short')===value;
+  if(type==='location') return !!(t.check && t.check.whereTags && t.check.whereTags.includes(value));
+  return true;
 }
 
 function renderReview(){
@@ -1841,8 +1880,14 @@ function renderReview(){
   let rows = all.filter(t=>{
     if(reviewFilterAsset!=='all' && t.asset!==reviewFilterAsset) return false;
     if(reviewFilterOutcome!=='all' && outcomeOf(t)!==reviewFilterOutcome) return false;
+    if(!matchesReviewExtra(t)) return false;
     return true;
   });
+  /* most recently closed first — a freshly-saved trade (or one just clicked
+     through from Stats) should never be buried at the bottom under old
+     imported history. Falls back to array order for the rare trade with no
+     closedAtMs at all. */
+  rows = [...rows].sort((a,b)=> (b.closeData.closedAtMs||0) - (a.closeData.closedAtMs||0));
 
   if(all.length===0){
     container.innerHTML = '<div class="panel" style="text-align:center;color:var(--ink-faint);font-size:13px;">No journaled trades yet — finish a trade’s journey and hit "Save to Journal" to see it here.</div>';
@@ -1866,6 +1911,15 @@ function renderReview(){
   container.appendChild(stats);
 
   const filterRow = document.createElement('div'); filterRow.className='filter-row';
+
+  if(reviewFilterExtra){
+    const FILTER_LABEL = { setup:'Setup', combo:'Combo', direction:'Direction', location:'Location' };
+    const chip = document.createElement('div'); chip.className = 'filter-chip';
+    chip.innerHTML = `${FILTER_LABEL[reviewFilterExtra.type]}: ${escapeHtml(reviewFilterExtra.value)} <button title="Clear filter">✕</button>`;
+    chip.querySelector('button').addEventListener('click', ()=>{ reviewFilterExtra = null; renderReview(); });
+    filterRow.appendChild(chip);
+  }
+
   const assetSel = document.createElement('select');
   assetSel.innerHTML = '<option value="all">All assets</option>' + assetsInUse.map(a=>`<option value="${a}" ${a===reviewFilterAsset?'selected':''}>${a}</option>`).join('');
   assetSel.addEventListener('change', ()=>{ reviewFilterAsset = assetSel.value; renderReview(); });
@@ -2031,10 +2085,11 @@ function groupStats(rows, keyFn){
 /* limit: how many rows to show (sorted by Total R, best first). Pass
    Infinity for groupings with a naturally small, fixed universe (asset,
    direction, location) so nothing gets cut off. */
-function buildStatTable(title, groups, colLabel, limit){
+function buildStatTable(title, groups, colLabel, limit, filterType){
   limit = limit || 8;
   const wrap = document.createElement('div'); wrap.className='panel'; wrap.style.marginTop='14px';
-  wrap.innerHTML = `<div class="panel-label">${title}</div>`;
+  const hint = filterType ? ' <span class="sub-hint">click a row to see those trades in the Journal</span>' : '';
+  wrap.innerHTML = `<div class="panel-label">${title}${hint}</div>`;
   if(groups.length===0){
     const p = document.createElement('div'); p.style.cssText='color:var(--ink-faint);font-size:12.5px;'; p.textContent='Not enough data yet.';
     wrap.appendChild(p);
@@ -2054,9 +2109,9 @@ function buildStatTable(title, groups, colLabel, limit){
   </tr></thead>`;
   const tbody = document.createElement('tbody');
   [...groups].sort((a,b)=>b.totalR-a.totalR).slice(0,limit).forEach(g=>{
-    const tr = document.createElement('tr'); tr.style.cursor='default';
+    const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${escapeHtml(g.key)} <span style="color:var(--ink-faint);font-size:11px;">(${g.wins}W / ${g.losses}L${g.bes?' / '+g.bes+'BE':''})</span></td>
+      <td>${escapeHtml(g.key)} <span class="rv-sub">(${g.wins}W / ${g.losses}L${g.bes?' / '+g.bes+'BE':''})</span></td>
       <td style="text-align:right;">${g.count}</td>
       <td style="text-align:right;">${g.winRate}%</td>
       <td class="rv-r ${g.avgR>=0?'pos':'neg'}" style="text-align:right;">${g.avgR>=0?'+':''}${g.avgR.toFixed(2)}R</td>
@@ -2065,6 +2120,7 @@ function buildStatTable(title, groups, colLabel, limit){
       <td style="text-align:right;">${fmtDuration(g.avgLossDurationMs)}</td>
       <td class="rv-r ${g.totalNet>=0?'pos':'neg'}" style="text-align:right;">${g.netCount ? (g.totalNet>=0?'+':'')+g.totalNet.toFixed(2) : '—'}</td>
     `;
+    if(filterType) tr.addEventListener('click', ()=> openReviewFiltered(filterType, g.key));
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
@@ -2084,14 +2140,16 @@ function pickExtreme(groups, minTrades, worst){
   return [...pool].sort((a,b)=> worst ? a.totalR-b.totalR : b.totalR-a.totalR)[0];
 }
 
-function highlightTile(label, g){
+function highlightTile(label, g, filterType){
   if(!g){
     return `<div class="stat-tile"><div class="k">${label}</div><div class="v">—</div></div>`;
   }
-  return `<div class="stat-tile">
+  const clickable = filterType ? ' clickable' : '';
+  const attrs = filterType ? ` data-filter-type="${filterType}" data-filter-value="${escapeHtml(g.key)}"` : '';
+  return `<div class="stat-tile${clickable}"${attrs}>
     <div class="k">${label}</div>
     <div class="v ${g.totalR>=0?'pos':'neg'}">${g.totalR>=0?'+':''}${g.totalR.toFixed(2)}R</div>
-    <div style="font-family:var(--mono);font-size:11px;color:var(--ink-faint);margin-top:5px;">${escapeHtml(g.key)} · ${g.count} trade${g.count===1?'':'s'} · ${g.winRate}% WR</div>
+    <div class="stat-highlight">${escapeHtml(g.key)} · ${g.count} trade${g.count===1?'':'s'} · ${g.winRate}% WR</div>
   </div>`;
 }
 
@@ -2452,38 +2510,41 @@ function renderStats(){
   /* ---- Overview: quick top/bottom performers at a glance, before the
      full breakdown tables below ---- */
   const overviewWrap = document.createElement('div'); overviewWrap.className='panel'; overviewWrap.style.marginTop='14px';
-  overviewWrap.innerHTML = `<div class="panel-label">Overview <span class="sub-hint">best &amp; worst by Total R (2+ trades preferred)</span></div>`;
+  overviewWrap.innerHTML = `<div class="panel-label">Overview <span class="sub-hint">best &amp; worst by Total R (2+ trades preferred) — click a tile to see those trades</span></div>`;
   const ovRow1 = document.createElement('div'); ovRow1.className='stat-row'; ovRow1.style.marginTop='10px';
   ovRow1.innerHTML =
-    highlightTile('Top Asset', pickExtreme(byAsset, 2, false)) +
-    highlightTile('Lowest Asset', pickExtreme(byAsset, 2, true)) +
-    highlightTile('Top Setup', pickExtreme(bySetup, 2, false)) +
-    highlightTile('Lowest Setup', pickExtreme(bySetup, 2, true));
+    highlightTile('Top Asset', pickExtreme(byAsset, 2, false), 'asset') +
+    highlightTile('Lowest Asset', pickExtreme(byAsset, 2, true), 'asset') +
+    highlightTile('Top Setup', pickExtreme(bySetup, 2, false), 'setup') +
+    highlightTile('Lowest Setup', pickExtreme(bySetup, 2, true), 'setup');
   overviewWrap.appendChild(ovRow1);
 
   const ovExtras = [];
   if(byCombo.length){
-    ovExtras.push(highlightTile('Top Setup Combo', pickExtreme(byCombo, 2, false)));
-    ovExtras.push(highlightTile('Lowest Setup Combo', pickExtreme(byCombo, 2, true)));
+    ovExtras.push(highlightTile('Top Setup Combo', pickExtreme(byCombo, 2, false), 'combo'));
+    ovExtras.push(highlightTile('Lowest Setup Combo', pickExtreme(byCombo, 2, true), 'combo'));
   }
-  ovExtras.push(highlightTile('Best Direction', pickExtreme(byDir, 1, false)));
-  ovExtras.push(highlightTile('Worst Direction', pickExtreme(byDir, 1, true)));
+  ovExtras.push(highlightTile('Best Direction', pickExtreme(byDir, 1, false), 'direction'));
+  ovExtras.push(highlightTile('Worst Direction', pickExtreme(byDir, 1, true), 'direction'));
   if(byLocation.length){
-    ovExtras.push(highlightTile('Top Location', pickExtreme(byLocation, 2, false)));
-    ovExtras.push(highlightTile('Lowest Location', pickExtreme(byLocation, 2, true)));
+    ovExtras.push(highlightTile('Top Location', pickExtreme(byLocation, 2, false), 'location'));
+    ovExtras.push(highlightTile('Lowest Location', pickExtreme(byLocation, 2, true), 'location'));
   }
   for(let i=0;i<ovExtras.length;i+=4){
     const r = document.createElement('div'); r.className='stat-row'; r.style.marginTop='10px';
     r.innerHTML = ovExtras.slice(i,i+4).join('');
     overviewWrap.appendChild(r);
   }
+  overviewWrap.querySelectorAll('[data-filter-type]').forEach(el=>{
+    el.addEventListener('click', ()=> openReviewFiltered(el.dataset.filterType, el.dataset.filterValue));
+  });
   container.appendChild(overviewWrap);
 
-  container.appendChild(buildStatTable('Best Setups', bySetup, 'Setup'));
-  if(byCombo.length) container.appendChild(buildStatTable('Best Setup Combos', byCombo, 'Combo'));
-  container.appendChild(buildStatTable('By Asset', byAsset, 'Asset', Infinity));
-  container.appendChild(buildStatTable('By Direction', byDir, 'Direction', Infinity));
-  if(byLocation.length) container.appendChild(buildStatTable('By Location', byLocation, 'Location', Infinity));
+  container.appendChild(buildStatTable('Best Setups', bySetup, 'Setup', 8, 'setup'));
+  if(byCombo.length) container.appendChild(buildStatTable('Best Setup Combos', byCombo, 'Combo', 8, 'combo'));
+  container.appendChild(buildStatTable('By Asset', byAsset, 'Asset', Infinity, 'asset'));
+  container.appendChild(buildStatTable('By Direction', byDir, 'Direction', Infinity, 'direction'));
+  if(byLocation.length) container.appendChild(buildStatTable('By Location', byLocation, 'Location', Infinity, 'location'));
 }
 
 renderDashboard();
