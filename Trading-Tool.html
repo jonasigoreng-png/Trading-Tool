@@ -662,8 +662,36 @@ async function loadTrades(){
     console.warn('Laden der Trades fehlgeschlagen, starte leer:', e);
     trades = [];
   }
+  dedupeImportedTrades();
   tradesLoaded = true;
   renderDashboard();
+}
+
+/* Self-healing safety net: collapses imported trades that are exact repeats
+   of the same source row down to one copy each. Each import run mints a
+   fresh random id even for an identical row, so duplicates can't be caught
+   by id — they're matched on the data that actually identifies a historical
+   trade instead (asset, direction, created time, closed time, net P&L).
+   This runs on every load, so the pile of ghost trades from the storage bug
+   above (65 → 130 → 196 → 262, each reload resurrecting old "removed"
+   imports) cleans itself up the next time this page is opened — including
+   properly deleting the duplicate documents from storage, so they can't
+   come back a second time. */
+function dedupeImportedTrades(){
+  const seen = new Set();
+  const keep = [];
+  const removed = [];
+  trades.forEach(t=>{
+    if(!t.imported){ keep.push(t); return; }
+    const fp = [t.asset, t.dir, t.createdAt, t.closeData && t.closeData.closedAtMs, t.closeData && t.closeData.netPnl].join('|');
+    if(seen.has(fp)){ removed.push(t); } else { seen.add(fp); keep.push(t); }
+  });
+  if(removed.length){
+    trades = keep;
+    removed.forEach(t=> storageDelete('trade:'+t.id).catch(()=>{}));
+    console.warn(`Removed ${removed.length} duplicate imported trade(s) found in storage.`);
+  }
+  return removed.length;
 }
 
 let persistTimer = null;
@@ -937,13 +965,21 @@ document.getElementById('importBtn').addEventListener('click', ()=>{
   document.getElementById('importFile').click();
 });
 document.getElementById('clearImportedBtn').addEventListener('click', ()=>{
-  const count = trades.filter(t=>t.imported).length;
-  if(count===0) return;
-  if(confirm(`Remove all ${count} imported trades? Trades you made yourself in the app are not affected. This can't be undone.`)){
+  const toRemove = trades.filter(t=>t.imported);
+  if(toRemove.length===0) return;
+  if(confirm(`Remove all ${toRemove.length} imported trades? Trades you made yourself in the app are not affected. This can't be undone.`)){
     trades = trades.filter(t=>!t.imported);
+    /* Each trade lives in its own 'trade:<id>' document in storage. Just
+       dropping them from the in-memory array and calling persist() only
+       UPSERTS what's still in `trades` — it never deletes the old docs, so
+       they'd silently come back from storage next time the page loads.
+       That ghost-document bug is exactly how 65 imported trades turned into
+       130, then 196, then 262 — every reload resurrected everything that
+       was ever imported, on top of whatever was freshly re-imported. */
+    toRemove.forEach(t=> storageDelete('trade:'+t.id).catch(()=>{}));
     persist();
     renderDashboard();
-    document.getElementById('importStatus').textContent = `Removed ${count} imported trade${count===1?'':'s'}.`;
+    document.getElementById('importStatus').textContent = `Removed ${toRemove.length} imported trade${toRemove.length===1?'':'s'}.`;
   }
 });
 document.getElementById('importFile').addEventListener('change', (e)=>{
@@ -967,15 +1003,19 @@ document.getElementById('importFile').addEventListener('change', (e)=>{
          65 imported trades silently became 130, then 196 — never again). If
          you really do want two separate imports side by side, add the second
          file's trades first, then come back for this one. */
-      const oldImportedCount = trades.filter(t=>t.imported).length;
-      if(oldImportedCount>0){
-        const replace = confirm(`You already have ${oldImportedCount} imported trade${oldImportedCount===1?'':'s'}. Replace them with this file's trades?\n\n(Trades you made yourself in the app are never affected. Cancel aborts — it will NOT add these on top.)`);
+      const oldImported = trades.filter(t=>t.imported);
+      if(oldImported.length>0){
+        const replace = confirm(`You already have ${oldImported.length} imported trade${oldImported.length===1?'':'s'}. Replace them with this file's trades?\n\n(Trades you made yourself in the app are never affected. Cancel aborts — it will NOT add these on top.)`);
         if(!replace){
           statusEl.textContent = 'Import cancelled — your existing imported trades were left untouched.';
           document.getElementById('importFile').value = '';
           return;
         }
         trades = trades.filter(t=>!t.imported);
+        /* Delete the actual storage documents too — not just the in-memory
+           copy — otherwise they silently resurface on next page load (the
+           real reason trade counts kept climbing: 65 → 130 → 196 → 262). */
+        oldImported.forEach(t=> storageDelete('trade:'+t.id).catch(()=>{}));
       }
       let imported = 0;
       rawRows.forEach(raw=>{
@@ -1323,7 +1363,11 @@ function renderCheckStage(t){
   planBtn.className = 'btn primary';
   planBtn.textContent = 'Make the Plan →';
   planBtn.addEventListener('click', ()=>{
-    t.stage = 'planned'; openStage='planned'; persist(); renderJourney();
+    /* Only ever moves the trade FORWARD. If you're here editing an already
+       closed/journaled trade's Check stage, this must never regress t.stage
+       back to 'planned' — that would silently knock it out of the Journal. */
+    if(stageIndex(t.stage) < stageIndex('planned')) t.stage = 'planned';
+    openStage='planned'; persist(); renderJourney();
   });
   actions.appendChild(planBtn);
 
@@ -1491,7 +1535,11 @@ function renderPlanStage(t){
   inTradeBtn.className='btn go';
   inTradeBtn.textContent = 'Order Filled — In Trade →';
   inTradeBtn.addEventListener('click', ()=>{
-    t.stage='active'; openStage='active'; if(!t.activeAt) t.activeAt=Date.now(); persist(); renderJourney();
+    /* Forward-only, same reasoning as the Check stage's "Make the Plan"
+       button — never regress an already-active/closed trade back to
+       'planned' just because you opened this stage to edit it. */
+    if(stageIndex(t.stage) < stageIndex('active')) t.stage='active';
+    openStage='active'; if(!t.activeAt) t.activeAt=Date.now(); persist(); renderJourney();
   });
   actions.appendChild(inTradeBtn);
   outer.appendChild(actions);
@@ -1560,6 +1608,19 @@ function renderActiveStage(t){
   outer.appendChild(mgmtPanel);
 
   const actions = document.createElement('div'); actions.className='actions';
+  /* Check and Plan already had a save-only button (Save to Checks / Add to
+     Plan) for editing without advancing — Active was missing one, so fixing
+     a management log entry on an already-closed trade meant either trusting
+     the auto-save-on-input alone or clicking "Trade Done" out of habit. */
+  const saveActiveBtn = document.createElement('button');
+  saveActiveBtn.className = 'btn';
+  saveActiveBtn.textContent = 'Save';
+  saveActiveBtn.addEventListener('click', ()=>{
+    persist();
+    saveActiveBtn.textContent = 'Saved ✓';
+    setTimeout(()=>{ closeJourney(); }, 450);
+  });
+  actions.appendChild(saveActiveBtn);
   const closeBtn = document.createElement('button'); closeBtn.className='btn primary'; closeBtn.textContent='Trade Done →';
   closeBtn.addEventListener('click', ()=>{
     t.stage='closed'; openStage='closed';
