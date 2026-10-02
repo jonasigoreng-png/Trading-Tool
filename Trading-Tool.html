@@ -380,9 +380,6 @@ input[type=text]:focus, textarea:focus, select:focus{ outline:none; border-color
       <input type="file" id="importFile" accept=".xlsx,.xls" style="display:none;">
     </div>
     <div class="import-status" id="importStatus"></div>
-    <div class="dash-btn-row" id="removeImportedRow" style="display:none;margin-top:8px;">
-      <button class="import-btn" id="removeImportedBtn" style="color:var(--nogo);"></button>
-    </div>
   </div>
 
   <!-- ============ JOURNEY ============ -->
@@ -753,29 +750,7 @@ function renderDashboard(){
     col.appendChild(dropZone);
     cols.appendChild(col);
   });
-  updateRemoveImportedBtn();
 }
-
-/* Shows a one-click way to undo an Excel import — only visible while
-   there are still trades flagged imported:true (set by rowToTrade()).
-   Manually created/edited trades are never touched by this. */
-function updateRemoveImportedBtn(){
-  const row = document.getElementById('removeImportedRow');
-  const btn = document.getElementById('removeImportedBtn');
-  if(!row || !btn) return;
-  const count = trades.filter(t=>t.imported).length;
-  if(count===0){ row.style.display='none'; return; }
-  row.style.display='';
-  btn.textContent = `Remove ${count} Imported Trade${count===1?'':'s'}`;
-}
-document.getElementById('removeImportedBtn').addEventListener('click', ()=>{
-  const toRemove = trades.filter(t=>t.imported);
-  if(toRemove.length===0) return;
-  if(!confirm(`Delete all ${toRemove.length} imported trade(s)? This can't be undone. Trades you created or edited yourself are not affected.`)) return;
-  trades = trades.filter(t=>!t.imported);
-  Promise.all(toRemove.map(t=> storageDelete('trade:'+t.id))).catch(()=>{});
-  renderDashboard();
-});
 
 document.getElementById('newTradeBtn').addEventListener('click', ()=>{
   const t = {
@@ -848,18 +823,50 @@ function localInputValueToMs(str){
   return isNaN(ms) ? undefined : ms;
 }
 
+/* Known pattern names (both directions + the "Failed X" variants), used to
+   normalize whatever casing/spacing shows up in your "notes" column back
+   to the app's own labels — so "Best Setups" groups "shooting star" and
+   "Shooting Star" together instead of splitting them. */
+const KNOWN_PATTERN_LOOKUP = (()=>{
+  const all = [...new Set([...PATTERNS_BY_DIR.long, ...PATTERNS_BY_DIR.short, ...FAILED_PATTERN_OPTIONS])];
+  const map = new Map();
+  all.forEach(p=> map.set(p.toLowerCase(), p));
+  return map;
+})();
+/* Your "notes" column holds the setup(s) for a trade — e.g. "Hammer",
+   "Shooting Star, Bearish Engulfing", "Hammer + Breakout" for a combo.
+   Splits on common separators and normalizes each piece against the
+   app's known pattern names where it recognizes one, otherwise keeps
+   your original wording so nothing gets silently dropped. */
+function parsePatternsFromNotes(notes){
+  if(!notes) return [];
+  return String(notes)
+    .split(/\s*(?:,|\/|\\|\+|&|;| and )\s*/i)
+    .map(s=>s.trim())
+    .filter(Boolean)
+    .map(s=> KNOWN_PATTERN_LOOKUP.get(s.toLowerCase()) || s)
+    .filter((v,i,arr)=> arr.indexOf(v)===i); // dedupe, keep first-seen order
+}
+
 function rowToTrade(row){
   const dir = String(row.direction||'long').trim().toLowerCase()==='short' ? 'short' : 'long';
   const status = String(row.status||'closed').trim().toLowerCase();
   const isClosed = status === 'closed';
+  /* Your spreadsheet's "pnl" column is already net (fees already taken out)
+     — unlike the Journal stage's own PNL/Fees fields, which are gross and
+     get fees subtracted in-app. So on import, pnl IS the net figure, and
+     gross is reconstructed from it (net + fees) just so the "PNL" field
+     shows something consistent rather than being left blank. */
   const pnl = row.pnl!==undefined && row.pnl!=='' ? parseFloat(row.pnl) : null;
   const fees = row.fees!==undefined && row.fees!=='' ? parseFloat(row.fees) : null;
   let netPnl = '';
+  let grossPnl = null;
   if(pnl!==null){
-    const net = pnl - (fees||0);
-    netPnl = (net>=0?'+':'') + net.toFixed(2);
+    netPnl = (pnl>=0?'+':'') + pnl.toFixed(2);
+    grossPnl = pnl + (fees||0);
   }
-  const setupLabel = row.playbook || row.tags || 'Imported';
+  const notePatterns = parsePatternsFromNotes(row.notes);
+  const patterns = notePatterns.length ? notePatterns : [row.playbook || row.tags || 'Imported'];
   const createdMs = row.created_at ? new Date(row.created_at).getTime() : NaN;
   const closedMs = row.closed_at ? new Date(row.closed_at).getTime() : NaN;
   return {
@@ -867,7 +874,7 @@ function rowToTrade(row){
     imported: true,
     asset: shortSymbol(row.symbol),
     dir,
-    patterns: [setupLabel],
+    patterns,
     bias: null,
     stage: isClosed ? 'closed' : 'active',
     createdAt: !isNaN(createdMs) ? createdMs : undefined,
@@ -884,12 +891,12 @@ function rowToTrade(row){
       size: row.position_size!==undefined ? String(row.position_size) : '',
       rMultiple: fmtRMultiple(row.r_multiple),
       stopUsedPct: '',
-      pnl: pnl!==null ? ((pnl>=0?'+':'')+pnl.toFixed(2)) : '',
+      pnl: grossPnl!==null ? ((grossPnl>=0?'+':'')+grossPnl.toFixed(2)) : '',
       fees: fees!==null ? fees.toFixed(2) : '',
       netPnl,
       outcome: parseOutcome(row.outcome)
     } : {},
-    journal:{ shots:[], evalNote: row.notes || '', logged: isClosed }
+    journal:{ shots:[], evalNote: '', logged: isClosed }
   };
 }
 
