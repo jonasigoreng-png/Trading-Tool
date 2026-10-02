@@ -119,6 +119,8 @@ h1,h2,h3{ font-family:var(--mono); letter-spacing:-0.01em; margin:0; }
   font-family:var(--mono); font-size:13px; line-height:1; display:flex; align-items:center; justify-content:center;
 }
 .tc-delete:hover{ background:var(--nogo-dim); color:var(--nogo); }
+.rv-delete{ background:none; border:none; color:var(--ink-faint); cursor:pointer; font-size:14px; padding:4px 7px; border-radius:4px; line-height:1; }
+.rv-delete:hover{ background:var(--nogo-dim); color:var(--nogo); }
 .tc-top{ display:flex; justify-content:space-between; align-items:baseline; gap:6px; margin-bottom:5px; padding-right:18px; }
 .tc-asset{ font-family:var(--mono); font-size:13.5px; color:var(--ink); }
 .tc-bias{ font-family:var(--mono); font-size:10px; padding:2px 6px; border-radius:3px; letter-spacing:.02em; }
@@ -371,6 +373,9 @@ input[type=text]:focus, textarea:focus, select:focus{ outline:none; border-color
       <input type="file" id="importFile" accept=".xlsx,.xls" style="display:none;">
     </div>
     <div class="import-status" id="importStatus"></div>
+    <div class="dash-btn-row" id="removeImportedRow" style="display:none;margin-top:8px;">
+      <button class="import-btn" id="removeImportedBtn" style="color:var(--nogo);"></button>
+    </div>
   </div>
 
   <!-- ============ JOURNEY ============ -->
@@ -727,7 +732,29 @@ function renderDashboard(){
     col.appendChild(dropZone);
     cols.appendChild(col);
   });
+  updateRemoveImportedBtn();
 }
+
+/* Shows a one-click way to undo an Excel import — only visible while
+   there are still trades flagged imported:true (set by rowToTrade()).
+   Manually created/edited trades are never touched by this. */
+function updateRemoveImportedBtn(){
+  const row = document.getElementById('removeImportedRow');
+  const btn = document.getElementById('removeImportedBtn');
+  if(!row || !btn) return;
+  const count = trades.filter(t=>t.imported).length;
+  if(count===0){ row.style.display='none'; return; }
+  row.style.display='';
+  btn.textContent = `Remove ${count} Imported Trade${count===1?'':'s'}`;
+}
+document.getElementById('removeImportedBtn').addEventListener('click', ()=>{
+  const toRemove = trades.filter(t=>t.imported);
+  if(toRemove.length===0) return;
+  if(!confirm(`Delete all ${toRemove.length} imported trade(s)? This can't be undone. Trades you created or edited yourself are not affected.`)) return;
+  trades = trades.filter(t=>!t.imported);
+  Promise.all(toRemove.map(t=> storageDelete('trade:'+t.id))).catch(()=>{});
+  renderDashboard();
+});
 
 document.getElementById('newTradeBtn').addEventListener('click', ()=>{
   const t = {
@@ -773,6 +800,22 @@ function fmtDateTime(v){
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/* <input type="datetime-local"> wants/returns "YYYY-MM-DDTHH:mm" in LOCAL
+   time (no timezone suffix) — these convert that straight to/from the ms
+   timestamps activeAt/closedAtMs are stored as. */
+function msToLocalInputValue(ms){
+  if(!ms) return '';
+  const d = new Date(ms);
+  if(isNaN(d.getTime())) return '';
+  const pad = n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function localInputValueToMs(str){
+  if(!str) return undefined;
+  const ms = new Date(str).getTime();
+  return isNaN(ms) ? undefined : ms;
+}
+
 function rowToTrade(row){
   const dir = String(row.direction||'long').trim().toLowerCase()==='short' ? 'short' : 'long';
   const status = String(row.status||'closed').trim().toLowerCase();
@@ -789,6 +832,7 @@ function rowToTrade(row){
   const closedMs = row.closed_at ? new Date(row.closed_at).getTime() : NaN;
   return {
     id: uid(),
+    imported: true,
     asset: shortSymbol(row.symbol),
     dir,
     patterns: [setupLabel],
@@ -1359,6 +1403,18 @@ function renderActiveStage(t){
   planPanel.appendChild(planGrid);
   outer.appendChild(planPanel);
 
+  const timingPanel = document.createElement('div'); panelHead(timingPanel, 'Timing');
+  const timingGrid = document.createElement('div'); timingGrid.className='field-row';
+  const entryField = document.createElement('div'); entryField.className='field';
+  entryField.innerHTML = '<label>Entry Time</label>';
+  const entryInp = document.createElement('input'); entryInp.type='datetime-local';
+  entryInp.value = msToLocalInputValue(t.activeAt);
+  entryInp.addEventListener('input', ()=>{ t.activeAt = localInputValueToMs(entryInp.value); persist(); });
+  entryField.appendChild(entryInp);
+  timingGrid.appendChild(entryField);
+  timingPanel.appendChild(timingGrid);
+  outer.appendChild(timingPanel);
+
   const mgmtPanel = document.createElement('div'); panelHead(mgmtPanel,'Manage Position');
   const btnRow = document.createElement('div'); btnRow.className='mgmt-actions';
   ['Add','Adjust Stop','Cut Trade'].forEach(kind=>{
@@ -1456,14 +1512,24 @@ function renderJournalStage(t){
 
   const exitPanel = document.createElement('div'); panelHead(exitPanel, 'Exit');
   const grid = document.createElement('div'); grid.className='field-row';
-  [['exitPrice','Exit price'],['exitTime','Exit time']].forEach(([key,label])=>{
-    const f = document.createElement('div'); f.className='field';
-    f.innerHTML = `<label>${label}</label>`;
-    const inp = document.createElement('input'); inp.type='text'; inp.value=d[key]||''; inp.placeholder=key==='exitTime'?'14:10':'e.g. 19,700';
-    inp.addEventListener('input', ()=>{ d[key]=inp.value; persist(); });
-    f.appendChild(inp);
-    grid.appendChild(f);
+  const entryTimeField = document.createElement('div'); entryTimeField.className='field';
+  entryTimeField.innerHTML = '<label>Entry Time</label>';
+  const entryTimeInp = document.createElement('input'); entryTimeInp.type='datetime-local';
+  entryTimeInp.value = msToLocalInputValue(t.activeAt);
+  entryTimeInp.addEventListener('input', ()=>{ t.activeAt = localInputValueToMs(entryTimeInp.value); persist(); });
+  entryTimeField.appendChild(entryTimeInp);
+  grid.appendChild(entryTimeField);
+  const exitTimeField = document.createElement('div'); exitTimeField.className='field';
+  exitTimeField.innerHTML = '<label>Exit Time</label>';
+  const exitTimeInp = document.createElement('input'); exitTimeInp.type='datetime-local';
+  exitTimeInp.value = msToLocalInputValue(d.closedAtMs);
+  exitTimeInp.addEventListener('input', ()=>{
+    d.closedAtMs = localInputValueToMs(exitTimeInp.value);
+    d.exitTime = fmtDateTime(d.closedAtMs); /* keeps the journal table / Excel export in sync */
+    persist();
   });
+  exitTimeField.appendChild(exitTimeInp);
+  grid.appendChild(exitTimeField);
   exitPanel.appendChild(grid);
   const grid2 = document.createElement('div'); grid2.className='field-row'; grid2.style.marginTop='4px';
   const rRow = document.createElement('div'); rRow.className='field';
@@ -1481,6 +1547,12 @@ function renderJournalStage(t){
   exitPanel.appendChild(grid2);
 
   const grid3 = document.createElement('div'); grid3.className='field-row'; grid3.style.marginTop='4px';
+  const exitPriceRow = document.createElement('div'); exitPriceRow.className='field';
+  exitPriceRow.innerHTML = `<label>Exit price</label>`;
+  const exitPriceInp = document.createElement('input'); exitPriceInp.type='text'; exitPriceInp.value=d.exitPrice||''; exitPriceInp.placeholder='e.g. 19,700';
+  exitPriceInp.addEventListener('input', ()=>{ d.exitPrice=exitPriceInp.value; persist(); });
+  exitPriceRow.appendChild(exitPriceInp);
+  grid3.appendChild(exitPriceRow);
   const sizeRow = document.createElement('div'); sizeRow.className='field';
   sizeRow.innerHTML = `<label>Size traded</label>`;
   const sizeInp = document.createElement('input'); sizeInp.type='text'; sizeInp.value=d.size||''; sizeInp.placeholder='e.g. 0.5 lots / 2 contracts';
@@ -1709,23 +1781,35 @@ function renderReview(){
   const tableWrap = document.createElement('div'); tableWrap.className='table-wrap';
   const table = document.createElement('table'); table.className='rv-table';
   table.innerHTML = `<thead><tr>
-    <th>Date</th><th>Asset</th><th>Dir</th><th>Setup</th><th>Mgmt</th><th style="text-align:right;">Stop used</th><th style="text-align:right;">R</th>
+    <th>Entry</th><th>Exit</th><th>Asset</th><th>Dir</th><th>Setup</th><th>Mgmt</th><th style="text-align:right;">Stop used</th><th style="text-align:right;">R</th><th></th>
   </tr></thead>`;
   const tbody = document.createElement('tbody');
   rows.forEach(t=>{
     const tr = document.createElement('tr');
     const r = t.closeData.rMultiple || '—';
     const rClass = r.startsWith && r.startsWith('-') ? 'neg' : 'pos';
+    const entryDisplay = fmtDateTime(t.activeAt);
+    const exitDisplay = fmtDateTime(t.closeData.closedAtMs) || t.closeData.exitTime || '';
     tr.innerHTML = `
-      <td>${t.closeData.exitTime ? escapeHtml(t.closeData.exitTime) : '—'}</td>
+      <td>${entryDisplay ? escapeHtml(entryDisplay) : '—'}</td>
+      <td>${exitDisplay ? escapeHtml(exitDisplay) : '—'}</td>
       <td style="font-family:var(--mono);">${escapeHtml(t.asset)}</td>
       <td>${t.dir==='long'?'Long':'Short'}</td>
       <td>${escapeHtml(patternsOf(t).join(', '))}</td>
       <td>${t.mgmtLog.length}</td>
       <td style="text-align:right;">${escapeHtml(t.closeData.stopUsedPct||'—')}</td>
       <td class="rv-r ${rClass}">${escapeHtml(r)}${r!=='—'?'R':''}</td>
+      <td style="text-align:right;"><button class="rv-delete" title="Delete trade">✕</button></td>
     `;
     tr.addEventListener('click', ()=> openJourney(t.id));
+    tr.querySelector('.rv-delete').addEventListener('click', (e)=>{
+      e.stopPropagation();
+      if(confirm('Delete this trade? This can’t be undone.')){
+        trades = trades.filter(x=>x.id!==t.id);
+        storageDelete('trade:'+t.id).catch(()=>{});
+        renderReview();
+      }
+    });
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
@@ -1737,7 +1821,8 @@ function renderReview(){
 function exportJournalToExcel(rows){
   if(typeof XLSX === 'undefined') return;
   const data = rows.map(t=>({
-    Date: t.closeData.exitTime || '',
+    'Entry Time': fmtDateTime(t.activeAt) || '',
+    'Exit Time': fmtDateTime(t.closeData.closedAtMs) || t.closeData.exitTime || '',
     Asset: t.asset,
     Direction: t.dir,
     Setup: patternsOf(t).join(', '),
