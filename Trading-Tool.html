@@ -1871,6 +1871,28 @@ function buildStatTable(title, groups, colLabel, limit){
   return wrap;
 }
 
+/* Picks the strongest / weakest group by Total R. Prefers groups with at
+   least `minTrades` trades so a single lucky/unlucky outlier doesn't look
+   like "your best asset" — falls back to the full pool if nothing meets
+   that bar yet (e.g. early on, everything has 1 trade). */
+function pickExtreme(groups, minTrades, worst){
+  if(!groups.length) return null;
+  const eligible = groups.filter(g=>g.count>=minTrades);
+  const pool = eligible.length ? eligible : groups;
+  return [...pool].sort((a,b)=> worst ? a.totalR-b.totalR : b.totalR-a.totalR)[0];
+}
+
+function highlightTile(label, g){
+  if(!g){
+    return `<div class="stat-tile"><div class="k">${label}</div><div class="v">—</div></div>`;
+  }
+  return `<div class="stat-tile">
+    <div class="k">${label}</div>
+    <div class="v ${g.totalR>=0?'pos':'neg'}">${g.totalR>=0?'+':''}${g.totalR.toFixed(2)}R</div>
+    <div style="font-family:var(--mono);font-size:11px;color:var(--ink-faint);margin-top:5px;">${escapeHtml(g.key)} · ${g.count} trade${g.count===1?'':'s'} · ${g.winRate}% WR</div>
+  </div>`;
+}
+
 function renderStats(){
   const container = document.getElementById('statsContent');
   container.innerHTML = '';
@@ -1957,21 +1979,48 @@ function renderStats(){
   container.appendChild(row4);
 
   const bySetup = groupStats(rows, t=>{ const p = patternsOf(t); return p.length ? p : ['—']; });
-  container.appendChild(buildStatTable('Best Setups', bySetup, 'Setup'));
-
   const byCombo = groupStats(rows, t=>{
     const p = patternsOf(t);
     return p.length>1 ? [[...p].sort().join(' + ')] : [];
   });
-  if(byCombo.length) container.appendChild(buildStatTable('Best Setup Combos', byCombo, 'Combo'));
-
   const byAsset = groupStats(rows, t=> [t.asset]);
-  container.appendChild(buildStatTable('By Asset', byAsset, 'Asset', Infinity));
-
   const byDir = groupStats(rows, t=> [t.dir==='long'?'Long':'Short']);
-  container.appendChild(buildStatTable('By Direction', byDir, 'Direction', Infinity));
-
   const byLocation = groupStats(rows, t=> (t.check && t.check.whereTags && t.check.whereTags.length) ? t.check.whereTags : []);
+
+  /* ---- Overview: quick top/bottom performers at a glance, before the
+     full breakdown tables below ---- */
+  const overviewWrap = document.createElement('div'); overviewWrap.className='panel'; overviewWrap.style.marginTop='14px';
+  overviewWrap.innerHTML = `<div class="panel-label">Overview <span class="sub-hint">best &amp; worst by Total R (2+ trades preferred)</span></div>`;
+  const ovRow1 = document.createElement('div'); ovRow1.className='stat-row'; ovRow1.style.marginTop='10px';
+  ovRow1.innerHTML =
+    highlightTile('Top Asset', pickExtreme(byAsset, 2, false)) +
+    highlightTile('Lowest Asset', pickExtreme(byAsset, 2, true)) +
+    highlightTile('Top Setup', pickExtreme(bySetup, 2, false)) +
+    highlightTile('Lowest Setup', pickExtreme(bySetup, 2, true));
+  overviewWrap.appendChild(ovRow1);
+
+  const ovExtras = [];
+  if(byCombo.length){
+    ovExtras.push(highlightTile('Top Setup Combo', pickExtreme(byCombo, 2, false)));
+    ovExtras.push(highlightTile('Lowest Setup Combo', pickExtreme(byCombo, 2, true)));
+  }
+  ovExtras.push(highlightTile('Best Direction', pickExtreme(byDir, 1, false)));
+  ovExtras.push(highlightTile('Worst Direction', pickExtreme(byDir, 1, true)));
+  if(byLocation.length){
+    ovExtras.push(highlightTile('Top Location', pickExtreme(byLocation, 2, false)));
+    ovExtras.push(highlightTile('Lowest Location', pickExtreme(byLocation, 2, true)));
+  }
+  for(let i=0;i<ovExtras.length;i+=4){
+    const r = document.createElement('div'); r.className='stat-row'; r.style.marginTop='10px';
+    r.innerHTML = ovExtras.slice(i,i+4).join('');
+    overviewWrap.appendChild(r);
+  }
+  container.appendChild(overviewWrap);
+
+  container.appendChild(buildStatTable('Best Setups', bySetup, 'Setup'));
+  if(byCombo.length) container.appendChild(buildStatTable('Best Setup Combos', byCombo, 'Combo'));
+  container.appendChild(buildStatTable('By Asset', byAsset, 'Asset', Infinity));
+  container.appendChild(buildStatTable('By Direction', byDir, 'Direction', Infinity));
   if(byLocation.length) container.appendChild(buildStatTable('By Location', byLocation, 'Location', Infinity));
 }
 
