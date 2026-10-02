@@ -866,7 +866,12 @@ function rowToTrade(row){
     grossPnl = pnl + (fees||0);
   }
   const notePatterns = parsePatternsFromNotes(row.notes);
-  const patterns = notePatterns.length ? notePatterns : [row.playbook || row.tags || 'Imported'];
+  /* If notes/playbook/tags are all blank for a row, leave patterns empty
+     rather than inventing a literal "Imported" label — that trade still
+     counts fully in every overall stat (R, Net P&L, win rate, equity
+     curve…), it just has nothing to contribute to setup-based tables like
+     "Best Setups", exactly like a real trade with no setup chosen would. */
+  const patterns = notePatterns.length ? notePatterns : (row.playbook || row.tags ? [row.playbook || row.tags] : []);
   const createdMs = row.created_at ? new Date(row.created_at).getTime() : NaN;
   const closedMs = row.closed_at ? new Date(row.closed_at).getTime() : NaN;
   return {
@@ -2392,7 +2397,11 @@ function renderStats(){
   container.appendChild(buildEquityCurveChart(rows));
   container.appendChild(buildMonthlyRChart(rows));
 
-  const bySetup = groupStats(rows, t=>{ const p = patternsOf(t); return p.length ? p : ['—']; });
+  /* trades with no recognized setup (patternsOf(t) empty) simply don't
+     contribute to this grouping at all — they're not a fake "—" bucket,
+     they just have nothing to rank. They're still fully counted in every
+     overall number above (Trades, Total R, Total Net P&L, equity curve). */
+  const bySetup = groupStats(rows, t=> patternsOf(t));
   const byCombo = groupStats(rows, t=>{
     const p = patternsOf(t);
     return p.length>1 ? [[...p].sort().join(' + ')] : [];
