@@ -961,11 +961,21 @@ document.getElementById('importFile').addEventListener('change', (e)=>{
          import logic improves) should REPLACE the old import, not pile a
          second copy on top — otherwise fixes never show up without manually
          deleting dozens of old cards first. Trades you created yourself in
-         the app (imported is not set) are never touched. */
+         the app (imported is not set) are never touched. Cancelling here
+         means Cancel — it aborts the whole import, it does NOT add a second
+         copy on top (that used to be the Cancel behavior and is exactly how
+         65 imported trades silently became 130, then 196 — never again). If
+         you really do want two separate imports side by side, add the second
+         file's trades first, then come back for this one. */
       const oldImportedCount = trades.filter(t=>t.imported).length;
       if(oldImportedCount>0){
-        const replace = confirm(`You already have ${oldImportedCount} imported trade${oldImportedCount===1?'':'s'}. Replace them with this file's trades? (Trades you made yourself in the app are not affected.)\n\nOK = replace old imports · Cancel = add these as extra trades on top`);
-        if(replace) trades = trades.filter(t=>!t.imported);
+        const replace = confirm(`You already have ${oldImportedCount} imported trade${oldImportedCount===1?'':'s'}. Replace them with this file's trades?\n\n(Trades you made yourself in the app are never affected. Cancel aborts — it will NOT add these on top.)`);
+        if(!replace){
+          statusEl.textContent = 'Import cancelled — your existing imported trades were left untouched.';
+          document.getElementById('importFile').value = '';
+          return;
+        }
+        trades = trades.filter(t=>!t.imported);
       }
       let imported = 0;
       rawRows.forEach(raw=>{
@@ -1730,12 +1740,18 @@ function renderJournalStage(t){
     outer.appendChild(tiles);
   }
 
+  /* Entry/Stop/Target shown here come from the Plan stage (the exact price
+     levels you committed to), never from Check (check.entryLevel is just a
+     free-text note like "Retest of LHPB Level" from the checking stage —
+     easy to mix up with the real plan, so it's deliberately not shown here
+     as if it were a price). */
   const recapPanel = document.createElement('div'); panelHead(recapPanel, 'Carried over from Check + Plan');
   const recap = document.createElement('div'); recap.className='jd-grid';
   recap.innerHTML = `
     <div class="jd-row"><div class="jd-label">Setup location</div><div class="jd-value">${escapeHtml(t.check.where||'—')}</div></div>
-    <div class="jd-row"><div class="jd-label">Entry level</div><div class="jd-value">${escapeHtml(t.check.entryLevel||'—')}</div></div>
-    <div class="jd-row"><div class="jd-label">Plan</div><div class="jd-value">${escapeHtml(t.plan.entry||'—')} → ${escapeHtml(t.plan.stop||'—')} / ${escapeHtml(t.plan.target||'—')}</div></div>
+    <div class="jd-row"><div class="jd-label">Entry (Plan)</div><div class="jd-value">${escapeHtml(t.plan.entry||'—')}</div></div>
+    <div class="jd-row"><div class="jd-label">Stop (Plan)</div><div class="jd-value">${escapeHtml(t.plan.stop||'—')}</div></div>
+    <div class="jd-row"><div class="jd-label">Target (Plan)</div><div class="jd-value">${escapeHtml(t.plan.target||'—')}</div></div>
     <div class="jd-row"><div class="jd-label">Mindset going in</div><div class="jd-value">${escapeHtml(t.check.mindset||'—')}</div></div>
   `;
   recapPanel.appendChild(recap);
@@ -1835,6 +1851,12 @@ function escapeHtml(str){ const d=document.createElement('div'); d.textContent=s
 --------------------------------------------------------------------- */
 let reviewFilterAsset = 'all';
 let reviewFilterOutcome = 'all';
+/* 'all', or one of the mgmt-log kinds ('Add','Adjust Stop','Cut Trade') —
+   lets you pull up e.g. "every trade I cut early" or "every trade I added
+   to" to see how those actually played out. Only trades managed through
+   the app's own Active-stage log can match this (imported trades have no
+   mgmt log), which is expected. */
+let reviewFilterMgmt = 'all';
 /* One of these at a time — set by clicking through from a Stats table/tile.
    { type: 'setup'|'combo'|'direction'|'location', value: string } or null. */
 let reviewFilterExtra = null;
@@ -1850,6 +1872,7 @@ function journaledTrades(){
    existed; everything else goes through reviewFilterExtra. */
 function openReviewFiltered(type, value){
   reviewFilterOutcome = 'all';
+  reviewFilterMgmt = 'all';
   if(type==='asset'){
     reviewFilterAsset = value;
     reviewFilterExtra = null;
@@ -1880,6 +1903,7 @@ function renderReview(){
   let rows = all.filter(t=>{
     if(reviewFilterAsset!=='all' && t.asset!==reviewFilterAsset) return false;
     if(reviewFilterOutcome!=='all' && outcomeOf(t)!==reviewFilterOutcome) return false;
+    if(reviewFilterMgmt!=='all' && !t.mgmtLog.some(e=>e.kind===reviewFilterMgmt)) return false;
     if(!matchesReviewExtra(t)) return false;
     return true;
   });
@@ -1934,6 +1958,16 @@ function renderReview(){
   `;
   outcomeSel.addEventListener('change', ()=>{ reviewFilterOutcome = outcomeSel.value; renderReview(); });
   filterRow.appendChild(outcomeSel);
+
+  const mgmtSel = document.createElement('select');
+  mgmtSel.innerHTML = `
+    <option value="all" ${reviewFilterMgmt==='all'?'selected':''}>All management actions</option>
+    <option value="Add" ${reviewFilterMgmt==='Add'?'selected':''}>Added to</option>
+    <option value="Adjust Stop" ${reviewFilterMgmt==='Adjust Stop'?'selected':''}>Stop adjusted</option>
+    <option value="Cut Trade" ${reviewFilterMgmt==='Cut Trade'?'selected':''}>Cut</option>
+  `;
+  mgmtSel.addEventListener('change', ()=>{ reviewFilterMgmt = mgmtSel.value; renderReview(); });
+  filterRow.appendChild(mgmtSel);
 
   const exportBtn = document.createElement('button');
   exportBtn.className = 'export-btn';
