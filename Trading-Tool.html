@@ -121,6 +121,10 @@ h1,h2,h3{ font-family:var(--mono); letter-spacing:-0.01em; margin:0; }
 .tc-delete:hover{ background:var(--nogo-dim); color:var(--nogo); }
 .rv-delete{ background:none; border:none; color:var(--ink-faint); cursor:pointer; font-size:14px; padding:4px 7px; border-radius:4px; line-height:1; }
 .rv-delete:hover{ background:var(--nogo-dim); color:var(--nogo); }
+.outcome-pill{ font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.03em; padding:2px 7px; border-radius:3px; }
+.outcome-pill.pos{ background:var(--go-dim); color:var(--go); }
+.outcome-pill.neg{ background:var(--nogo-dim); color:var(--nogo); }
+.outcome-pill.flag{ background:var(--wait-dim); color:var(--wait); }
 .tc-top{ display:flex; justify-content:space-between; align-items:baseline; gap:6px; margin-bottom:5px; padding-right:18px; }
 .tc-asset{ font-family:var(--mono); font-size:13.5px; color:var(--ink); }
 .tc-bias{ font-family:var(--mono); font-size:10px; padding:2px 6px; border-radius:3px; letter-spacing:.02em; }
@@ -230,6 +234,7 @@ h1,h2,h3{ font-family:var(--mono); letter-spacing:-0.01em; margin:0; }
 .opt.selected{ background:var(--select-dim); border-color:var(--select); color:var(--select); }
 .opt.selected.neg{ background:var(--nogo-dim); border-color:var(--nogo); color:var(--nogo); }
 .opt.selected.flag{ background:var(--wait-dim); border-color:var(--wait); color:var(--wait); }
+.opt.selected.pos{ background:var(--go-dim); border-color:var(--go); color:var(--go); }
 input[type=text], textarea, select{
   width:100%; background:var(--panel-raised); border:1px solid var(--line); border-radius:4px;
   color:var(--ink); font-family:var(--sans); font-size:13px; padding:9px 10px; resize:vertical;
@@ -318,6 +323,8 @@ input[type=text]:focus, textarea:focus, select:focus{ outline:none; border-color
 .stat-row{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:18px; }
 @media (max-width:560px){ .stat-row{ grid-template-columns:repeat(2,1fr); } }
 .stat-tile{ background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
+.stat-tile.clickable{ cursor:pointer; transition:border-color .12s, transform .12s; }
+.stat-tile.clickable:hover{ border-color:var(--ink-dim); transform:translateY(-1px); }
 .stat-tile .k{ font-family:var(--mono); font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:6px; }
 .stat-tile .v{ font-family:var(--mono); font-size:19px; font-variant-numeric:tabular-nums; }
 .stat-tile .v.pos{ color:var(--go); }
@@ -602,6 +609,20 @@ function patternsOf(t){
   return t.pattern ? [t.pattern] : [];
 }
 
+/* Single source of truth for win/loss/breakeven across the whole app.
+   Prefers the explicit Outcome flag you set (or import via the outcome
+   column) — far more reliable than guessing from the R-multiple's sign,
+   since a flagged breakeven can still carry a small non-zero R from fees.
+   Falls back to the R-multiple sign only for older, unflagged trades. */
+function outcomeOf(t){
+  if(t.closeData && t.closeData.outcome) return t.closeData.outcome; // 'win' | 'loss' | 'be'
+  const r = parseFloat(String((t.closeData && t.closeData.rMultiple) || '').replace(',','.'));
+  if(isNaN(r)) return null;
+  if(r>0) return 'win';
+  if(r<0) return 'loss';
+  return 'be';
+}
+
 let trades = [];
 let tradesLoaded = false;
 
@@ -779,6 +800,17 @@ document.getElementById('newTradeBtn').addEventListener('click', ()=>{
    beyond symbol + direction to produce a usable record.
 --------------------------------------------------------------------- */
 function normHeader(h){ return String(h||'').trim().toLowerCase().replace(/[\s_-]+/g,''); }
+/* Accepts Win / Loss / BE (and a few common spellings/abbreviations) from
+   the imported "outcome" column and normalizes to the same 'win'|'loss'|'be'
+   values the in-app Outcome chips use. */
+function parseOutcome(v){
+  const s = String(v||'').trim().toLowerCase().replace(/[\s_/-]+/g,'');
+  if(!s) return null;
+  if(['win','w','gain'].includes(s)) return 'win';
+  if(['loss','lose','l'].includes(s)) return 'loss';
+  if(['be','breakeven','b.e.','be.'].includes(s)) return 'be';
+  return null;
+}
 
 function shortSymbol(sym){
   if(!sym) return '';
@@ -854,7 +886,8 @@ function rowToTrade(row){
       stopUsedPct: '',
       pnl: pnl!==null ? ((pnl>=0?'+':'')+pnl.toFixed(2)) : '',
       fees: fees!==null ? fees.toFixed(2) : '',
-      netPnl
+      netPnl,
+      outcome: parseOutcome(row.outcome)
     } : {},
     journal:{ shots:[], evalNote: row.notes || '', logged: isClosed }
   };
@@ -884,7 +917,8 @@ document.getElementById('importFile').addEventListener('change', (e)=>{
           direction: row['direction'], status: row['status'], entry_price: row['entryprice'],
           exit_price: row['exitprice'], stop_loss: row['stoploss'], position_size: row['positionsize'],
           pnl: row['pnl'], fees: row['fees'], risk_amount: row['riskamount'], r_multiple: row['rmultiple'],
-          playbook: row['playbook'], tags: row['tags'], notes: row['notes']
+          playbook: row['playbook'], tags: row['tags'], notes: row['notes'],
+          outcome: row['outcome'] || row['result'] || row['winloss'] || row['wl']
         };
         if(!mapped.symbol) return; // skip rows without a symbol — nothing to import
         trades.push(rowToTrade(mapped));
@@ -903,12 +937,17 @@ document.getElementById('importFile').addEventListener('change', (e)=>{
 });
 
 document.getElementById('backBtn').addEventListener('click', closeJourney);
-document.getElementById('reviewNavBtn').addEventListener('click', openReview);
-document.getElementById('reviewBackBtn').addEventListener('click', closeJourney);
-document.getElementById('statsNavBtn').addEventListener('click', openStats);
-document.getElementById('statsBackBtn').addEventListener('click', closeJourney);
+document.getElementById('reviewNavBtn').addEventListener('click', ()=> openReview());
+document.getElementById('reviewBackBtn').addEventListener('click', backToDashboard);
+document.getElementById('statsNavBtn').addEventListener('click', ()=> openStats());
+document.getElementById('statsBackBtn').addEventListener('click', backToDashboard);
 
-function closeJourney(){
+/* Where "← Back" inside an open trade should land — set by whoever called
+   openJourney(). Lets a trade opened from the Journal/Stats tab return
+   there instead of always dumping you back on the dashboard. */
+let returnTo = 'dashboard';
+
+function backToDashboard(){
   openTradeId = null;
   document.getElementById('journeyView').classList.remove('active');
   document.getElementById('reviewView').classList.remove('active');
@@ -918,11 +957,20 @@ function closeJourney(){
   window.scrollTo(0,0);
 }
 
+function closeJourney(){
+  openTradeId = null;
+  document.getElementById('journeyView').classList.remove('active');
+  if(returnTo==='review'){ openReview(); return; }
+  if(returnTo==='stats'){ openStats(); return; }
+  backToDashboard();
+}
+
 /* ---------------------------------------------------------------------
    Journey shell: stepper + routing to the right stage renderer
 --------------------------------------------------------------------- */
-function openJourney(id){
+function openJourney(id, from){
   openTradeId = id;
+  returnTo = from || 'dashboard';
   const t = trades.find(x=>x.id===id);
   openStage = t.stage;
   document.getElementById('dashboardView').style.display = 'none';
@@ -1531,6 +1579,20 @@ function renderJournalStage(t){
   exitTimeField.appendChild(exitTimeInp);
   grid.appendChild(exitTimeField);
   exitPanel.appendChild(grid);
+
+  const outcomeField = document.createElement('div'); outcomeField.className='field'; outcomeField.style.marginTop='4px';
+  outcomeField.innerHTML = '<label>Outcome</label>';
+  const outcomeRow = document.createElement('div'); outcomeRow.className='opt-row';
+  [['win','Win','pos'],['loss','Loss','neg'],['be','Breakeven','flag']].forEach(([val,label,cls])=>{
+    const chip = document.createElement('div');
+    chip.className = 'opt' + (d.outcome===val ? ' selected '+cls : '');
+    chip.textContent = label;
+    chip.addEventListener('click', ()=>{ d.outcome = (d.outcome===val ? null : val); persist(); renderJourney(); });
+    outcomeRow.appendChild(chip);
+  });
+  outcomeField.appendChild(outcomeRow);
+  exitPanel.appendChild(outcomeField);
+
   const grid2 = document.createElement('div'); grid2.className='field-row'; grid2.style.marginTop='4px';
   const rRow = document.createElement('div'); rRow.className='field';
   rRow.innerHTML = `<label>R multiple</label>`;
@@ -1727,11 +1789,7 @@ function renderReview(){
 
   let rows = all.filter(t=>{
     if(reviewFilterAsset!=='all' && t.asset!==reviewFilterAsset) return false;
-    if(reviewFilterOutcome!=='all'){
-      const r = parseFloat((t.closeData.rMultiple||'0').replace(',','.'));
-      if(reviewFilterOutcome==='win' && !(r>0)) return false;
-      if(reviewFilterOutcome==='loss' && !(r<0)) return false;
-    }
+    if(reviewFilterOutcome!=='all' && outcomeOf(t)!==reviewFilterOutcome) return false;
     return true;
   });
 
@@ -1742,8 +1800,8 @@ function renderReview(){
 
   /* stats are computed over the filtered set, so they update live with the filters */
   const rVals = rows.map(t=> parseFloat((t.closeData.rMultiple||'0').replace(',','.'))).filter(n=>!isNaN(n));
-  const wins = rVals.filter(r=>r>0).length;
-  const winRate = rVals.length ? Math.round(100*wins/rVals.length) : 0;
+  const wins = rows.filter(t=> outcomeOf(t)==='win').length;
+  const winRate = rows.length ? Math.round(100*wins/rows.length) : 0;
   const totalR = rVals.reduce((a,b)=>a+b,0);
   const avgR = rVals.length ? (totalR/rVals.length) : 0;
 
@@ -1764,9 +1822,10 @@ function renderReview(){
 
   const outcomeSel = document.createElement('select');
   outcomeSel.innerHTML = `
-    <option value="all" ${reviewFilterOutcome==='all'?'selected':''}>Wins & losses</option>
+    <option value="all" ${reviewFilterOutcome==='all'?'selected':''}>All outcomes</option>
     <option value="win" ${reviewFilterOutcome==='win'?'selected':''}>Wins only</option>
     <option value="loss" ${reviewFilterOutcome==='loss'?'selected':''}>Losses only</option>
+    <option value="be" ${reviewFilterOutcome==='be'?'selected':''}>Breakeven only</option>
   `;
   outcomeSel.addEventListener('change', ()=>{ reviewFilterOutcome = outcomeSel.value; renderReview(); });
   filterRow.appendChild(outcomeSel);
@@ -1781,13 +1840,16 @@ function renderReview(){
   const tableWrap = document.createElement('div'); tableWrap.className='table-wrap';
   const table = document.createElement('table'); table.className='rv-table';
   table.innerHTML = `<thead><tr>
-    <th>Entry</th><th>Exit</th><th>Asset</th><th>Dir</th><th>Setup</th><th>Mgmt</th><th style="text-align:right;">Stop used</th><th style="text-align:right;">R</th><th></th>
+    <th>Entry</th><th>Exit</th><th>Asset</th><th>Dir</th><th>Setup</th><th>Outcome</th><th>Mgmt</th><th style="text-align:right;">Stop used</th><th style="text-align:right;">R</th><th></th>
   </tr></thead>`;
   const tbody = document.createElement('tbody');
+  const OUTCOME_PILL = { win:['Win','pos'], loss:['Loss','neg'], be:['BE','flag'] };
   rows.forEach(t=>{
     const tr = document.createElement('tr');
     const r = t.closeData.rMultiple || '—';
-    const rClass = r.startsWith && r.startsWith('-') ? 'neg' : 'pos';
+    const outcome = outcomeOf(t);
+    const rClass = outcome==='loss' ? 'neg' : (outcome==='win' ? 'pos' : (r.startsWith && r.startsWith('-') ? 'neg' : 'pos'));
+    const pill = OUTCOME_PILL[outcome];
     const entryDisplay = fmtDateTime(t.activeAt);
     const exitDisplay = fmtDateTime(t.closeData.closedAtMs) || t.closeData.exitTime || '';
     tr.innerHTML = `
@@ -1796,12 +1858,13 @@ function renderReview(){
       <td style="font-family:var(--mono);">${escapeHtml(t.asset)}</td>
       <td>${t.dir==='long'?'Long':'Short'}</td>
       <td>${escapeHtml(patternsOf(t).join(', '))}</td>
+      <td>${pill ? `<span class="outcome-pill ${pill[1]}">${pill[0]}</span>` : '—'}</td>
       <td>${t.mgmtLog.length}</td>
       <td style="text-align:right;">${escapeHtml(t.closeData.stopUsedPct||'—')}</td>
       <td class="rv-r ${rClass}">${escapeHtml(r)}${r!=='—'?'R':''}</td>
       <td style="text-align:right;"><button class="rv-delete" title="Delete trade">✕</button></td>
     `;
-    tr.addEventListener('click', ()=> openJourney(t.id));
+    tr.addEventListener('click', ()=> openJourney(t.id, 'review'));
     tr.querySelector('.rv-delete').addEventListener('click', (e)=>{
       e.stopPropagation();
       if(confirm('Delete this trade? This can’t be undone.')){
@@ -1832,6 +1895,7 @@ function exportJournalToExcel(rows){
     'Exit Price': t.closeData.exitPrice || '',
     'Size': t.closeData.size || '',
     'R Multiple': t.closeData.rMultiple || '',
+    'Outcome': t.closeData.outcome ? ({win:'Win',loss:'Loss',be:'BE'}[t.closeData.outcome] || t.closeData.outcome) : '',
     '% Stop Used': t.closeData.stopUsedPct || '',
     'PNL': t.closeData.pnl || '',
     'Fees': t.closeData.fees || '',
@@ -1878,19 +1942,20 @@ function groupStats(rows, keyFn){
   rows.forEach(t=>{
     const r = parseFloat((t.closeData.rMultiple||'0').replace(',','.'));
     if(isNaN(r)) return;
+    const outcome = outcomeOf(t);
     const net = parseFloat(String(t.closeData.netPnl||'').replace(',','.'));
     const dur = durationOf(t);
     keyFn(t).forEach(key=>{
       if(!key) return;
-      if(!map.has(key)) map.set(key, { key, count:0, wins:0, losses:0, totalR:0, totalNet:0, netCount:0, winDurs:[], lossDurs:[] });
+      if(!map.has(key)) map.set(key, { key, count:0, wins:0, losses:0, bes:0, totalR:0, totalNet:0, netCount:0, winDurs:[], lossDurs:[] });
       const g = map.get(key);
       g.count++;
-      if(r>0) g.wins++; else if(r<0) g.losses++;
+      if(outcome==='win') g.wins++; else if(outcome==='loss') g.losses++; else if(outcome==='be') g.bes++;
       g.totalR += r;
       if(!isNaN(net)){ g.totalNet += net; g.netCount++; }
       if(dur!=null){
-        if(r>0) g.winDurs.push(dur);
-        else if(r<0) g.lossDurs.push(dur);
+        if(outcome==='win') g.winDurs.push(dur);
+        else if(outcome==='loss') g.lossDurs.push(dur);
       }
     });
   });
@@ -1900,6 +1965,7 @@ function groupStats(rows, keyFn){
     count: g.count,
     wins: g.wins,
     losses: g.losses,
+    bes: g.bes,
     winRate: g.count ? Math.round(100*g.wins/g.count) : 0,
     totalR: g.totalR,
     avgR: g.count ? g.totalR/g.count : 0,
@@ -1939,7 +2005,7 @@ function buildStatTable(title, groups, colLabel, limit){
   [...groups].sort((a,b)=>b.totalR-a.totalR).slice(0,limit).forEach(g=>{
     const tr = document.createElement('tr'); tr.style.cursor='default';
     tr.innerHTML = `
-      <td>${escapeHtml(g.key)} <span style="color:var(--ink-faint);font-size:11px;">(${g.wins}W / ${g.losses}L)</span></td>
+      <td>${escapeHtml(g.key)} <span style="color:var(--ink-faint);font-size:11px;">(${g.wins}W / ${g.losses}L${g.bes?' / '+g.bes+'BE':''})</span></td>
       <td style="text-align:right;">${g.count}</td>
       <td style="text-align:right;">${g.winRate}%</td>
       <td class="rv-r ${g.avgR>=0?'pos':'neg'}" style="text-align:right;">${g.avgR>=0?'+':''}${g.avgR.toFixed(2)}R</td>
@@ -1978,6 +2044,226 @@ function highlightTile(label, g){
   </div>`;
 }
 
+/* ---------------------------------------------------------------------
+   Charts — hand-built inline SVG (no charting library loaded). Both
+   share the same look: thin 2px line / rounded bars, a recessive zero
+   baseline, a hover tooltip (never color-alone — every value is also
+   typed out in the tooltip), and a click-through back into the trade.
+--------------------------------------------------------------------- */
+function buildEquityCurveChart(rows){
+  const wrap = document.createElement('div'); wrap.className='panel'; wrap.style.marginTop='14px';
+  wrap.innerHTML = '<div class="panel-label">Equity Curve <span class="sub-hint">cumulative R, in the order trades closed — click a point to open that trade</span></div>';
+
+  const entries = rows.map(t=>{
+    const r = parseFloat((t.closeData.rMultiple||'0').replace(',','.'));
+    if(isNaN(r)) return null;
+    const ms = t.closeData.closedAtMs || t.activeAt || t.createdAt || 0;
+    return { t, r, ms };
+  }).filter(Boolean).sort((a,b)=> a.ms-b.ms);
+
+  if(entries.length < 2){
+    const p = document.createElement('div'); p.style.cssText='color:var(--ink-faint);font-size:12.5px;'; p.textContent='Not enough closed trades yet for a curve.';
+    wrap.appendChild(p);
+    return wrap;
+  }
+
+  let cum = 0;
+  const points = entries.map((e,i)=>{ cum += e.r; return { t:e.t, r:e.r, ms:e.ms, idx:i, cum }; });
+
+  const W=760, H=230, ML=46, MR=14, MT=18, MB=16;
+  const plotW=W-ML-MR, plotH=H-MT-MB;
+  const cums = points.map(p=>p.cum);
+  const minC = Math.min(0, ...cums), maxC = Math.max(0, ...cums);
+  const pad = (maxC-minC)*0.15 || 1;
+  const yMin = minC-pad, yMax = maxC+pad;
+  const xFor = i => ML + (i/(points.length-1))*plotW;
+  const yFor = v => MT + (1-(v-yMin)/(yMax-yMin))*plotH;
+
+  const finalPositive = points[points.length-1].cum >= 0;
+  const color = finalPositive ? 'var(--go)' : 'var(--nogo)';
+  const zeroY = yFor(0);
+
+  const linePts = points.map((p,i)=> `${xFor(i).toFixed(2)},${yFor(p.cum).toFixed(2)}`).join(' ');
+  const areaPts = `${xFor(0).toFixed(2)},${(MT+plotH).toFixed(2)} ${linePts} ${xFor(points.length-1).toFixed(2)},${(MT+plotH).toFixed(2)}`;
+  const gradId = 'eqgrad'+Math.random().toString(36).slice(2,9);
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const holder = document.createElement('div'); holder.style.position='relative';
+  const svg = document.createElementNS(svgNS,'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('style','width:100%;height:auto;display:block;');
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.26"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <line x1="${ML}" y1="${zeroY.toFixed(2)}" x2="${W-MR}" y2="${zeroY.toFixed(2)}" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 4"/>
+    <text x="${ML-7}" y="${(zeroY+3).toFixed(2)}" text-anchor="end" font-size="10" font-family="var(--mono)" fill="var(--ink-faint)">0</text>
+    <text x="${ML-7}" y="${MT+8}" text-anchor="end" font-size="10" font-family="var(--mono)" fill="var(--ink-faint)">${yMax>=0?'+':''}${yMax.toFixed(1)}R</text>
+    <text x="${ML-7}" y="${(MT+plotH).toFixed(2)}" text-anchor="end" font-size="10" font-family="var(--mono)" fill="var(--ink-faint)">${yMin>=0?'+':''}${yMin.toFixed(1)}R</text>
+    <polygon points="${areaPts}" fill="url(#${gradId})" stroke="none"/>
+    <polyline points="${linePts}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  `;
+
+  const lastX = xFor(points.length-1), lastY = yFor(points[points.length-1].cum);
+  const dot = document.createElementNS(svgNS,'circle');
+  dot.setAttribute('cx', lastX.toFixed(2)); dot.setAttribute('cy', lastY.toFixed(2)); dot.setAttribute('r','3.5');
+  dot.setAttribute('fill', color);
+  svg.appendChild(dot);
+  const finalLabel = document.createElementNS(svgNS,'text');
+  const labelRight = lastX > W-90;
+  finalLabel.setAttribute('x', (labelRight ? lastX-7 : lastX+7).toFixed(2));
+  finalLabel.setAttribute('y', (lastY < MT+14 ? lastY+16 : lastY-8).toFixed(2));
+  finalLabel.setAttribute('text-anchor', labelRight ? 'end' : 'start');
+  finalLabel.setAttribute('font-size','11'); finalLabel.setAttribute('font-family','var(--mono)'); finalLabel.setAttribute('font-weight','700');
+  finalLabel.setAttribute('fill', color);
+  finalLabel.textContent = `${points[points.length-1].cum>=0?'+':''}${points[points.length-1].cum.toFixed(2)}R`;
+  svg.appendChild(finalLabel);
+
+  const crossLine = document.createElementNS(svgNS,'line');
+  crossLine.setAttribute('y1', MT); crossLine.setAttribute('y2', MT+plotH);
+  crossLine.setAttribute('stroke','var(--ink-faint)'); crossLine.setAttribute('stroke-width','1'); crossLine.setAttribute('visibility','hidden');
+  svg.appendChild(crossLine);
+  const crossDot = document.createElementNS(svgNS,'circle');
+  crossDot.setAttribute('r','4'); crossDot.setAttribute('fill','var(--panel)'); crossDot.setAttribute('stroke', color); crossDot.setAttribute('stroke-width','2');
+  crossDot.setAttribute('visibility','hidden');
+  svg.appendChild(crossDot);
+
+  const hit = document.createElementNS(svgNS,'rect');
+  hit.setAttribute('x', ML); hit.setAttribute('y', MT); hit.setAttribute('width', plotW); hit.setAttribute('height', plotH);
+  hit.setAttribute('fill','transparent'); hit.style.cursor='pointer';
+  svg.appendChild(hit);
+
+  const tooltip = document.createElement('div');
+  tooltip.style.cssText = 'position:absolute;pointer-events:none;background:var(--panel-raised);border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-family:var(--mono);font-size:11.5px;color:var(--ink);white-space:nowrap;visibility:hidden;z-index:5;box-shadow:0 4px 14px rgba(0,0,0,.35);';
+  holder.appendChild(tooltip);
+
+  function nearestIdx(clientX){
+    const rect = svg.getBoundingClientRect();
+    const scaleX = W/rect.width;
+    const mx = (clientX-rect.left)*scaleX;
+    let i = Math.round(((mx-ML)/plotW)*(points.length-1));
+    return Math.max(0, Math.min(points.length-1, i));
+  }
+  function showAt(i){
+    const p = points[i];
+    const x = xFor(i), y = yFor(p.cum);
+    crossLine.setAttribute('x1',x.toFixed(2)); crossLine.setAttribute('x2',x.toFixed(2)); crossLine.setAttribute('visibility','visible');
+    crossDot.setAttribute('cx',x.toFixed(2)); crossDot.setAttribute('cy',y.toFixed(2)); crossDot.setAttribute('visibility','visible');
+    const dateStr = fmtDateTime(p.ms);
+    tooltip.innerHTML = `<div style="color:var(--ink-faint);font-size:10px;margin-bottom:3px;">${dateStr?escapeHtml(dateStr):'Trade '+(i+1)}</div>
+      <div>${escapeHtml(p.t.asset)} <span style="color:${p.r>=0?'var(--go)':'var(--nogo)'}">${p.r>=0?'+':''}${p.r.toFixed(2)}R</span></div>
+      <div style="color:var(--ink-dim);">Cumulative: <span style="color:${p.cum>=0?'var(--go)':'var(--nogo)'}">${p.cum>=0?'+':''}${p.cum.toFixed(2)}R</span></div>`;
+    const svgRect = svg.getBoundingClientRect();
+    const leftPx = (x/W)*svgRect.width;
+    tooltip.style.left = Math.min(Math.max(leftPx-65,0), Math.max(svgRect.width-150,0))+'px';
+    tooltip.style.top = '-4px';
+    tooltip.style.visibility='visible';
+  }
+  function hide(){
+    crossLine.setAttribute('visibility','hidden');
+    crossDot.setAttribute('visibility','hidden');
+    tooltip.style.visibility='hidden';
+  }
+  hit.addEventListener('mousemove', e=> showAt(nearestIdx(e.clientX)));
+  hit.addEventListener('mouseleave', hide);
+  hit.addEventListener('click', e=> openJourney(points[nearestIdx(e.clientX)].t.id, 'stats'));
+
+  holder.appendChild(svg);
+  wrap.appendChild(holder);
+  return wrap;
+}
+
+function buildMonthlyRChart(rows){
+  const wrap = document.createElement('div'); wrap.className='panel'; wrap.style.marginTop='14px';
+  wrap.innerHTML = '<div class="panel-label">Monthly R <span class="sub-hint">total R by the month a trade closed</span></div>';
+
+  const monthMap = new Map();
+  rows.forEach(t=>{
+    const r = parseFloat((t.closeData.rMultiple||'0').replace(',','.'));
+    if(isNaN(r)) return;
+    const ms = t.closeData.closedAtMs || t.activeAt || t.createdAt;
+    if(!ms) return;
+    const d = new Date(ms);
+    const key = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+    if(!monthMap.has(key)) monthMap.set(key, { key, r:0, count:0, label: d.toLocaleDateString('de-DE',{month:'short',year:'2-digit'}) });
+    const m = monthMap.get(key); m.r += r; m.count++;
+  });
+  const months = [...monthMap.values()].sort((a,b)=> a.key.localeCompare(b.key));
+
+  if(months.length===0){
+    const p = document.createElement('div'); p.style.cssText='color:var(--ink-faint);font-size:12.5px;'; p.textContent='Not enough data yet.';
+    wrap.appendChild(p);
+    return wrap;
+  }
+
+  const W=760, H=220, ML=46, MR=14, MT=16, MB=26;
+  const plotW=W-ML-MR, plotH=H-MT-MB;
+  const rs = months.map(m=>m.r);
+  const minR = Math.min(0, ...rs), maxR = Math.max(0, ...rs);
+  const pad = (maxR-minR)*0.15 || 1;
+  const yMin = minR-pad, yMax = maxR+pad;
+  const yFor = v => MT + (1-(v-yMin)/(yMax-yMin))*plotH;
+  const zeroY = yFor(0);
+  const n = months.length;
+  const bandW = plotW/n;
+  const barW = Math.min(bandW*0.56, 34);
+  const labelEvery = Math.max(1, Math.ceil(n/9));
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const holder = document.createElement('div'); holder.style.position='relative';
+  const svg = document.createElementNS(svgNS,'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('style','width:100%;height:auto;display:block;');
+
+  let staticSvg = `
+    <line x1="${ML}" y1="${zeroY.toFixed(2)}" x2="${W-MR}" y2="${zeroY.toFixed(2)}" stroke="var(--line)" stroke-width="1"/>
+    <text x="${ML-7}" y="${(zeroY+3).toFixed(2)}" text-anchor="end" font-size="10" font-family="var(--mono)" fill="var(--ink-faint)">0</text>
+  `;
+  months.forEach((m,i)=>{
+    if(i%labelEvery!==0 && i!==n-1) return;
+    const cx = ML + bandW*i + bandW/2;
+    staticSvg += `<text x="${cx.toFixed(1)}" y="${H-6}" text-anchor="middle" font-size="9.5" font-family="var(--mono)" fill="var(--ink-faint)">${escapeHtml(m.label)}</text>`;
+  });
+  svg.innerHTML = staticSvg;
+
+  const tooltip = document.createElement('div');
+  tooltip.style.cssText = 'position:absolute;pointer-events:none;background:var(--panel-raised);border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-family:var(--mono);font-size:11.5px;color:var(--ink);white-space:nowrap;visibility:hidden;z-index:5;box-shadow:0 4px 14px rgba(0,0,0,.35);';
+  holder.appendChild(tooltip);
+
+  months.forEach((m,i)=>{
+    const cx = ML + bandW*i + bandW/2;
+    const y0 = zeroY, y1 = yFor(m.r);
+    const top = Math.min(y0,y1), h = Math.max(1.5, Math.abs(y1-y0));
+    const rect = document.createElementNS(svgNS,'rect');
+    rect.setAttribute('x', (cx-barW/2).toFixed(1));
+    rect.setAttribute('y', top.toFixed(1));
+    rect.setAttribute('width', barW.toFixed(1));
+    rect.setAttribute('height', h.toFixed(1));
+    rect.setAttribute('rx','3');
+    rect.setAttribute('fill', m.r>=0 ? 'var(--go)' : 'var(--nogo)');
+    rect.style.cursor = 'pointer';
+    rect.addEventListener('mousemove', ()=>{
+      const svgRect = svg.getBoundingClientRect();
+      const leftPx = (cx/W)*svgRect.width;
+      tooltip.innerHTML = `<div style="color:var(--ink-faint);font-size:10px;margin-bottom:3px;">${escapeHtml(m.label)}</div>
+        <div>${m.count} trade${m.count===1?'':'s'}</div>
+        <div>Total: <span style="color:${m.r>=0?'var(--go)':'var(--nogo)'}">${m.r>=0?'+':''}${m.r.toFixed(2)}R</span></div>`;
+      tooltip.style.left = Math.min(Math.max(leftPx-58,0), Math.max(svgRect.width-140,0))+'px';
+      tooltip.style.top = '-6px';
+      tooltip.style.visibility='visible';
+    });
+    rect.addEventListener('mouseleave', ()=> tooltip.style.visibility='hidden');
+    svg.appendChild(rect);
+  });
+
+  holder.appendChild(svg);
+  wrap.appendChild(holder);
+  return wrap;
+}
+
 function renderStats(){
   const container = document.getElementById('statsContent');
   container.innerHTML = '';
@@ -1988,8 +2274,10 @@ function renderStats(){
     return;
   }
 
-  const rVals = rows.map(t=>({ t, r: parseFloat((t.closeData.rMultiple||'0').replace(',','.')) })).filter(x=>!isNaN(x.r));
-  const wins = rVals.filter(x=>x.r>0);
+  const rVals = rows.map(t=>({ t, r: parseFloat((t.closeData.rMultiple||'0').replace(',','.')), outcome: outcomeOf(t) })).filter(x=>!isNaN(x.r));
+  const wins = rVals.filter(x=>x.outcome==='win');
+  const losses = rVals.filter(x=>x.outcome==='loss');
+  const bes = rVals.filter(x=>x.outcome==='be');
   const totalR = rVals.reduce((a,x)=>a+x.r,0);
   const avgR = rVals.length ? totalR/rVals.length : 0;
   const winRate = rVals.length ? Math.round(100*wins.length/rVals.length) : 0;
@@ -2004,16 +2292,19 @@ function renderStats(){
   const durations = rows.map(durationOf).filter(d=>d!=null);
   const avgDurationMs = durations.length ? durations.reduce((a,b)=>a+b,0)/durations.length : null;
   const winDurations = wins.map(x=>durationOf(x.t)).filter(d=>d!=null);
-  const lossDurations = rVals.filter(x=>x.r<0).map(x=>durationOf(x.t)).filter(d=>d!=null);
+  const lossDurations = losses.map(x=>durationOf(x.t)).filter(d=>d!=null);
   const avgWinDurationMs = winDurations.length ? winDurations.reduce((a,b)=>a+b,0)/winDurations.length : null;
   const avgLossDurationMs = lossDurations.length ? lossDurations.reduce((a,b)=>a+b,0)/lossDurations.length : null;
 
   /* streaks, in the order trades actually closed (falls back to array order
-     when a trade has no closedAtMs — e.g. older manually-created records) */
-  const sorted = [...rVals].sort((a,b)=> (a.t.closeData.closedAtMs||0) - (b.t.closeData.closedAtMs||0));
+     when a trade has no closedAtMs — e.g. older manually-created records).
+     Breakeven trades don't extend or break a streak — they're just skipped,
+     so "3 wins in a row" still counts even with a BE sitting in between. */
+  const sorted = [...rVals].filter(x=>x.outcome==='win'||x.outcome==='loss')
+    .sort((a,b)=> (a.t.closeData.closedAtMs||0) - (b.t.closeData.closedAtMs||0));
   let curType=null, curStreak=0, winStreak=0, lossStreak=0;
   sorted.forEach(x=>{
-    const isWin = x.r>0;
+    const isWin = x.outcome==='win';
     curStreak = (curType===isWin) ? curStreak+1 : 1;
     curType = isWin;
     if(isWin) winStreak = Math.max(winStreak, curStreak); else lossStreak = Math.max(lossStreak, curStreak);
@@ -2039,6 +2330,14 @@ function renderStats(){
   `;
   container.appendChild(row1);
 
+  const row1b = document.createElement('div'); row1b.className='stat-row'; row1b.style.marginTop='10px';
+  row1b.innerHTML = `
+    <div class="stat-tile"><div class="k">Wins</div><div class="v pos">${wins.length}</div></div>
+    <div class="stat-tile"><div class="k">Losses</div><div class="v neg">${losses.length}</div></div>
+    <div class="stat-tile"><div class="k">Breakevens</div><div class="v">${bes.length}</div></div>
+  `;
+  container.appendChild(row1b);
+
   const row2 = document.createElement('div'); row2.className='stat-row'; row2.style.marginTop='10px';
   row2.innerHTML = `
     <div class="stat-tile"><div class="k">Total Net P&amp;L</div><div class="v ${totalNet>=0?'pos':'neg'}">${totalNet>=0?'+':''}${totalNet.toFixed(2)}</div></div>
@@ -2062,6 +2361,29 @@ function renderStats(){
     <div class="stat-tile"><div class="k">Avg Drawdown on Winners (% Stop Used)</div><div class="v">${avgStopWin!=null ? avgStopWin.toFixed(0)+'%' : '—'}</div></div>
   `;
   container.appendChild(row4);
+
+  /* Biggest single winner/loser by R — clickable straight into that trade's journal entry */
+  function tradeTile(label, entry){
+    if(!entry) return `<div class="stat-tile"><div class="k">${label}</div><div class="v">—</div></div>`;
+    const tt = entry.t;
+    const dateStr = fmtDateTime(tt.closeData.closedAtMs);
+    return `<div class="stat-tile clickable" data-trade-id="${tt.id}">
+      <div class="k">${label}</div>
+      <div class="v ${entry.r>=0?'pos':'neg'}">${entry.r>=0?'+':''}${entry.r.toFixed(2)}R</div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--ink-faint);margin-top:5px;">${escapeHtml(tt.asset)} · ${escapeHtml(patternsOf(tt).join(', ')||'—')}${dateStr?' · '+escapeHtml(dateStr):''}</div>
+    </div>`;
+  }
+  const bestTrade = rVals.length ? [...rVals].sort((a,b)=>b.r-a.r)[0] : null;
+  const worstTrade = rVals.length ? [...rVals].sort((a,b)=>a.r-b.r)[0] : null;
+  const row5 = document.createElement('div'); row5.className='stat-row'; row5.style.marginTop='10px';
+  row5.innerHTML = tradeTile('Biggest Winner', bestTrade) + tradeTile('Biggest Loser', worstTrade);
+  container.appendChild(row5);
+  row5.querySelectorAll('[data-trade-id]').forEach(el=>{
+    el.addEventListener('click', ()=> openJourney(el.dataset.tradeId, 'stats'));
+  });
+
+  container.appendChild(buildEquityCurveChart(rows));
+  container.appendChild(buildMonthlyRChart(rows));
 
   const bySetup = groupStats(rows, t=>{ const p = patternsOf(t); return p.length ? p : ['—']; });
   const byCombo = groupStats(rows, t=>{
