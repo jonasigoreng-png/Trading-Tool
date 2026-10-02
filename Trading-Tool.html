@@ -919,6 +919,16 @@ document.getElementById('importFile').addEventListener('change', (e)=>{
       const wb = XLSX.read(ev.target.result, { type:'array', cellDates:true });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rawRows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
+      /* Re-importing (e.g. after fixing a column, or after this tool's own
+         import logic improves) should REPLACE the old import, not pile a
+         second copy on top — otherwise fixes never show up without manually
+         deleting dozens of old cards first. Trades you created yourself in
+         the app (imported is not set) are never touched. */
+      const oldImportedCount = trades.filter(t=>t.imported).length;
+      if(oldImportedCount>0){
+        const replace = confirm(`You already have ${oldImportedCount} imported trade${oldImportedCount===1?'':'s'}. Replace them with this file's trades? (Trades you made yourself in the app are not affected.)\n\nOK = replace old imports · Cancel = add these as extra trades on top`);
+        if(replace) trades = trades.filter(t=>!t.imported);
+      }
       let imported = 0;
       rawRows.forEach(raw=>{
         const row = {};
