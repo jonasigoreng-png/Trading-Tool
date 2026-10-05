@@ -662,9 +662,34 @@ async function loadTrades(){
     console.warn('Laden der Trades fehlgeschlagen, starte leer:', e);
     trades = [];
   }
-  dedupeImportedTrades();
+  const repaired = repairRegressedImportedStages();
+  const deduped = dedupeImportedTrades();
+  if(repaired>0) persist();
   tradesLoaded = true;
   renderDashboard();
+}
+
+/* Self-healing safety net #2: an imported trade is only ever CREATED as
+   'active' or 'closed' (see rowToTrade) — it never starts at 'checking' or
+   'planned'. So if one is ever found sitting at 'checking'/'planned', that's
+   not new data, it's a scar from the (now-fixed) bug where clicking a
+   stage's "advance" button while editing an already-progressed trade could
+   silently regress t.stage — e.g. an already-closed EURUSD import getting
+   knocked back to "Planned" just from opening it to look at/edit something.
+   This repairs it back to what the trade's own data says it actually was,
+   permanently, instead of leaving it stuck wherever it got knocked to. */
+function repairRegressedImportedStages(){
+  let fixed = 0;
+  trades.forEach(t=>{
+    if(!t.imported) return;
+    if(t.stage==='checking' || t.stage==='planned'){
+      const hasCloseData = t.closeData && (t.closeData.rMultiple || t.closeData.pnl || t.closeData.netPnl || t.closeData.outcome);
+      t.stage = hasCloseData ? 'closed' : 'active';
+      fixed++;
+    }
+  });
+  if(fixed>0) console.warn(`Repaired ${fixed} imported trade(s) that had been regressed to an earlier stage.`);
+  return fixed;
 }
 
 /* Self-healing safety net: collapses imported trades that are exact repeats
@@ -1457,8 +1482,8 @@ function renderPlanStage(t){
   panel.appendChild(grid);
   outer.appendChild(panel);
 
-  const FTA_ACTIONS = ['Move Stop','Add','Further Evaluation'];
-  let draftActionType = null;
+  const FTA_ACTIONS = ['Move Stop','Add','Further Evaluation','2nd Chance Entry'];
+  let draftActionTypes = [];
 
   const ftaPanel = document.createElement('div'); ftaPanel.className='panel';
   ftaPanel.innerHTML = `<div class="panel-label">FTAs</div><div class="panel-sub">Where might this get interesting on the way? Stop adjustment, adding, or an alternate entry if you miss it.</div>`;
@@ -1468,10 +1493,13 @@ function renderPlanStage(t){
   }
   t.plan.ftas.forEach((f,i)=>{
     const row = document.createElement('div'); row.className='fta-item';
+    /* older FTAs (before multi-select) stored a single actionType string
+       instead of actionTypes — read both so nothing old breaks. */
+    const types = f.actionTypes || (f.actionType ? [f.actionType] : []);
     row.innerHTML = `<div>
-        <div style="display:flex; align-items:center; gap:8px;">
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
           <span style="font-family:var(--mono);">${escapeHtml(f.label)}</span>
-          ${f.actionType ? `<span class="fta-action-badge">${escapeHtml(f.actionType)}</span>` : ''}
+          ${types.map(a=>`<span class="fta-action-badge">${escapeHtml(a)}</span>`).join('')}
         </div>
         ${f.note ? `<div style="color:var(--ink-dim);font-size:12px;margin-top:4px;">${escapeHtml(f.note)}</div>` : ''}
       </div>`;
@@ -1491,14 +1519,14 @@ function renderPlanStage(t){
   addWrap.appendChild(lvlField);
 
   const actionField = document.createElement('div'); actionField.className='field';
-  actionField.innerHTML = '<label>What happens there?</label>';
+  actionField.innerHTML = '<label>What happens there? (pick any that apply)</label>';
   const actionRow = document.createElement('div'); actionRow.className='opt-row';
   FTA_ACTIONS.forEach(a=>{
     const chip = document.createElement('div'); chip.className='opt'; chip.textContent=a;
     chip.addEventListener('click', ()=>{
-      draftActionType = a;
-      actionRow.querySelectorAll('.opt').forEach(o=>o.classList.remove('selected'));
-      chip.classList.add('selected');
+      const i = draftActionTypes.indexOf(a);
+      if(i>-1){ draftActionTypes.splice(i,1); chip.classList.remove('selected'); }
+      else{ draftActionTypes.push(a); chip.classList.add('selected'); }
     });
     actionRow.appendChild(chip);
   });
@@ -1514,7 +1542,7 @@ function renderPlanStage(t){
   const addBtn = document.createElement('button'); addBtn.className='btn primary'; addBtn.textContent='+ Add FTA'; addBtn.style.marginTop='4px';
   addBtn.addEventListener('click', ()=>{
     if(!ftaLabel.value.trim()) return;
-    t.plan.ftas.push({ label:ftaLabel.value.trim(), actionType:draftActionType, note:ftaNote.value.trim() });
+    t.plan.ftas.push({ label:ftaLabel.value.trim(), actionTypes:[...draftActionTypes], note:ftaNote.value.trim() });
     persist(); renderJourney();
   });
   addWrap.appendChild(addBtn);
