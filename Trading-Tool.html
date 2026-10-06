@@ -1331,8 +1331,14 @@ function renderCheckStage(t){
     } else {
       b2 = qBlock('Which H1 level do you want to enter at?', null, body);
     }
-    const lvl = document.createElement('input'); lvl.type='text'; lvl.placeholder='H1 level you want to enter at, e.g. retest of LHPB level...'; lvl.style.marginTop='14px'; lvl.value=c.entryLevel||'';
-    lvl.addEventListener('input', ()=>{ c.entryLevel=lvl.value; persist(); });
+    const lvl = document.createElement('input'); lvl.type='text'; lvl.placeholder='Entry price, e.g. 19,650 — goes straight into the Plan'; lvl.style.marginTop='14px'; lvl.value=c.entryLevel||'';
+    lvl.addEventListener('input', ()=>{
+      /* feeds the Plan's Entry. Only overwritten while the Plan entry is empty or still
+         the value synced from here — so a price you adjusted in the Plan isn't clobbered. */
+      const prev = c.entryLevel||'';
+      if(!t.plan.entry || t.plan.entry===prev) t.plan.entry = lvl.value;
+      c.entryLevel = lvl.value; persist();
+    });
     b2.appendChild(lvl);
 
     /* 2 — look left */
@@ -1361,7 +1367,7 @@ function renderCheckStage(t){
       b2.appendChild(gRow);
       const cl = document.createElement('div'); cl.style.cssText='margin-top:14px;';
       cl.appendChild(Object.assign(document.createElement('div'),{textContent:'Confluence present',className:'sub-label'}));
-      multiChipRow(cl, ['W1/D1 bias','Fibonacci','ATR'], c.gradeConf, val=>{
+      multiChipRow(cl, ['W1/D1 bias','Fibonacci','ATR','EMA12','EMA24'], c.gradeConf, val=>{
         const i = c.gradeConf.indexOf(val);
         if(i>-1) c.gradeConf.splice(i,1); else c.gradeConf.push(val);
         c.gradeConfTouched = true;
