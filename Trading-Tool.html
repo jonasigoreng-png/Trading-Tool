@@ -619,6 +619,10 @@ function uid(){ return 't'+Math.random().toString(36).slice(2,9); }
    a single string in t.pattern — this normalizes either shape to an array
    everywhere it's read, without a one-time migration step. */
 function patternsOf(t){
+  /* No bias = a pure H1-level trade: the pre-selected pattern is hidden in the
+     Check stage, so it must not show on the card / in the Journal / in Stats either.
+     It counts as its own setup bucket instead. */
+  if(t.bias==='none') return ['H1 Level'];
   if(Array.isArray(t.patterns)) return t.patterns;
   return t.pattern ? [t.pattern] : [];
 }
@@ -1307,11 +1311,13 @@ function renderCheckStage(t){
   const YN = [{v:'yes',label:'Yes'},{v:'no',label:'No'}];
   const GRADE_NEED = {'1':2,'2':1,'3':0};
   if(!c.gradeConf) c.gradeConf = [];
-  const nConf = c.gradeConf.length;
+  /* the three Fib levels (and legacy 'Fibonacci') count as ONE confluence factor */
+  const FIB_SET = ['0.382','0.5','0.618','Fibonacci'];
+  const nConf = c.gradeConf.filter(x=>!FIB_SET.includes(x)).length + (c.gradeConf.some(x=>FIB_SET.includes(x)) ? 1 : 0);
   const gradeMet = !c.levelRating || !c.gradeConfTouched ? true : nConf >= GRADE_NEED[c.levelRating];
 
   const sumParts = [];
-  if(c.targetTF) sumParts.push({bias:'Target: bias TF',h1:'Target: H1',preempt:'Pre-empting'}[c.targetTF]);
+  if(c.targetTF) sumParts.push(({bias:'Target: bias TF',h1:'Target: H1',preempt:'Pre-empting'+((c.preemptTags&&c.preemptTags.length)?' '+c.preemptTags.join('/'):'')})[c.targetTF]);
   if(c.levelRating) sumParts.push('Grade '+c.levelRating);
   if(c.naked) sumParts.push(c.naked==='yes'?'naked ✓':'not naked');
   wrap.appendChild(Object.assign(document.createElement('div'),{className:'section-div',textContent: noBias ? 'Grade the H1 Level' : 'Grade the Level'}));
@@ -1328,6 +1334,20 @@ function renderCheckStage(t){
       const tfRow = document.createElement('div');
       choiceRow(tfRow, [{v:'h1',label:'H1 target'},{v:'preempt',label:'Pre-empting a daily/weekly bias'}], c.targetTF, v=>{ c.targetTF=v; persist(); }, false);
       b2.appendChild(tfRow);
+      if(c.targetTF==='preempt'){
+        if(!c.preemptTags) c.preemptTags = [];
+        const pg = document.createElement('div'); pg.style.marginTop='14px';
+        pg.appendChild(Object.assign(document.createElement('div'),{className:'sub-label',textContent:'What are you pre-empting?'}));
+        multiChipRow(pg, ['Weekly bias','Daily bias','Weekly candle close','Daily candle close','Weekly level','Daily level'], c.preemptTags, val=>{
+          const i = c.preemptTags.indexOf(val);
+          if(i>-1) c.preemptTags.splice(i,1); else c.preemptTags.push(val);
+          persist();
+        });
+        const pn = document.createElement('input'); pn.type='text'; pn.placeholder='Anything else — optional...'; pn.style.marginTop='10px'; pn.value=c.preemptNote||'';
+        pn.addEventListener('input', ()=>{ c.preemptNote=pn.value; persist(); });
+        pg.appendChild(pn);
+        b2.appendChild(pg);
+      }
     } else {
       b2 = qBlock('Which H1 level do you want to enter at?', null, body);
     }
@@ -1367,7 +1387,7 @@ function renderCheckStage(t){
       b2.appendChild(gRow);
       const cl = document.createElement('div'); cl.style.cssText='margin-top:14px;';
       cl.appendChild(Object.assign(document.createElement('div'),{textContent:'Confluence present',className:'sub-label'}));
-      multiChipRow(cl, ['W1/D1 bias','Fibonacci','ATR','EMA12','EMA24'], c.gradeConf, val=>{
+      multiChipRow(cl, ['W1/D1 bias','0.382','0.5','0.618','ATR','EMA12','EMA24'], c.gradeConf, val=>{
         const i = c.gradeConf.indexOf(val);
         if(i>-1) c.gradeConf.splice(i,1); else c.gradeConf.push(val);
         c.gradeConfTouched = true;
