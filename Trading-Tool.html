@@ -578,6 +578,8 @@ async function storageGet(key){
 }
 
 async function storageDelete(key){
+  /* also drop any local copies so a deleted trade can never be resurrected from them */
+  try{ localStorage.removeItem(key); if(key.startsWith('trade:')) localStorage.removeItem('tjbak:'+key.slice(6)); }catch(e){ /* ignore */ }
   if(await hasFirestore()){
     try{
       await fbDb.collection('kv').doc(key).delete();
@@ -674,9 +676,12 @@ async function loadTrades(){
     console.warn('Laden der Trades fehlgeschlagen, starte leer:', e);
     trades = [];
   }
+  /* what the cloud currently holds — only trades that differ from this get written */
+  trades.forEach(t=>{ const k = tradeKey(t); savedSnap.set(t.id,k); stampedKey.set(t.id,k); });
+  const merged = mergeLocalBackups();
   const repaired = repairRegressedImportedStages();
   const deduped = dedupeImportedTrades();
-  if(repaired>0) persist();
+  if(repaired>0 || merged>0) persist();
   tradesLoaded = true;
   renderDashboard();
 }
@@ -731,14 +736,117 @@ function dedupeImportedTrades(){
   return removed.length;
 }
 
-let persistTimer = null;
+/* ---------------------------------------------------------------------
+   Saving. Rules that keep edits from getting lost:
+   - Only trades that actually CHANGED are written (before, every edit
+     rewrote ALL trades — ~70 writes per keystroke burst, which burns
+     through Firestore's daily write quota; once that's exhausted, writes
+     fail and a refresh brings back stale cloud copies).
+   - Every changed trade also gets an instant local backup ('tjbak:<id>')
+     plus an updatedAt stamp. On load, the newer copy wins, and gets pushed
+     to the cloud again.
+   - A failed cloud write is NOT silently swallowed: a banner shows the
+     error and the write is retried.
+   - Pending edits are flushed when the tab is hidden / closed.
+--------------------------------------------------------------------- */
+const savedSnap = new Map();   /* id -> content key last confirmed in the cloud */
+const stampedKey = new Map();  /* id -> content key last stamped + backed up locally */
+function tradeKey(t){
+  const c = Object.assign({}, t); delete c.updatedAt;
+  return JSON.stringify(c);
+}
+
+function mergeLocalBackups(){
+  let changed = 0;
+  try{
+    const byId = new Map(trades.map(t=>[t.id,t]));
+    for(let i=0;i<localStorage.length;i++){
+      const lk = localStorage.key(i);
+      if(!lk) continue;
+      let loc = null;
+      try{ loc = JSON.parse(localStorage.getItem(lk)); }catch(e){ continue; }
+      if(!loc || !loc.id) continue;
+      const remote = byId.get(loc.id);
+      if(lk.startsWith('tjbak:')){
+        if(!remote){
+          /* exists only locally = never reached the cloud (e.g. created while a write failed) */
+          trades.push(loc); byId.set(loc.id, loc); changed++;
+        }else if((loc.updatedAt||0) > (remote.updatedAt||0)){
+          const idx = trades.indexOf(remote); trades[idx] = loc; byId.set(loc.id, loc);
+          stampedKey.set(loc.id, tradeKey(loc)); changed++;
+        }
+      }else if(lk.startsWith('trade:') && remote){
+        /* copies written by the old fallback when the cloud write failed. They carry no
+           timestamp, so only adopt one when it's clearly further along (later stage). */
+        if(stageIndex(loc.stage) > stageIndex(remote.stage)){
+          const idx = trades.indexOf(remote); trades[idx] = loc; byId.set(loc.id, loc); changed++;
+        }
+      }
+    }
+  }catch(e){ console.warn('Lokale Sicherung konnte nicht gelesen werden:', e); }
+  if(changed) console.warn(`Restored ${changed} trade(s) from local backup (newer than cloud copy).`);
+  return changed;
+}
+
+function showCloudStatus(err){
+  let el = document.getElementById('cloudBanner');
+  if(!err){ if(el) el.remove(); return; }
+  if(!el){
+    el = document.createElement('div'); el.id='cloudBanner';
+    el.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:9999;max-width:340px;background:#3a2a10;color:#f0b34a;border:1px solid #6b4a14;border-radius:8px;padding:10px 13px;font-size:12.5px;line-height:1.45;font-family:var(--mono);';
+    document.body.appendChild(el);
+  }
+  const code = (err && (err.code || err.message)) || 'unknown error';
+  el.textContent = '⚠ Cloud save failed ('+code+'). Your changes are kept in this browser and will be retried.';
+}
+
+function stampAndBackup(){
+  trades.forEach(t=>{
+    const k = tradeKey(t);
+    if(stampedKey.get(t.id)!==k){
+      t.updatedAt = Date.now();
+      stampedKey.set(t.id,k);
+      try{ localStorage.setItem('tjbak:'+t.id, JSON.stringify(t)); }catch(e){ /* storage full — cloud copy still gets written */ }
+    }
+  });
+}
+
+async function writeTradeStrict(t){
+  const json = JSON.stringify(t);
+  if(await hasFirestore()){
+    await fbDb.collection('kv').doc('trade:'+t.id).set({ value: json, updatedAt: Date.now() });
+    return;
+  }
+  await storageSet('trade:'+t.id, json); /* Claude-storage / localStorage environments */
+}
+
+let persistTimer = null, retryTimer = null;
+async function flushTrades(){
+  if(!tradesLoaded) return;
+  if(persistTimer){ clearTimeout(persistTimer); persistTimer = null; }
+  stampAndBackup();
+  const dirty = [];
+  trades.forEach(t=>{ const k = tradeKey(t); if(savedSnap.get(t.id)!==k) dirty.push({ t, k }); });
+  if(!dirty.length){ showCloudStatus(null); return; }
+  let firstErr = null;
+  await Promise.all(dirty.map(async ({t,k})=>{
+    try{ await writeTradeStrict(t); savedSnap.set(t.id,k); }
+    catch(e){ if(!firstErr) firstErr = e; console.warn('Speichern fehlgeschlagen für', t.id, e); }
+  }));
+  if(firstErr){
+    showCloudStatus(firstErr);
+    if(retryTimer) clearTimeout(retryTimer);
+    retryTimer = setTimeout(flushTrades, 20000);
+  }else{
+    showCloudStatus(null);
+  }
+}
 function persist(){
   if(persistTimer) clearTimeout(persistTimer);
-  persistTimer = setTimeout(()=>{
-    Promise.all(trades.map(t=> storageSet('trade:'+t.id, JSON.stringify(t))))
-      .catch(e=> console.warn('Speichern der Trades fehlgeschlagen:', e));
-  }, 400);
+  persistTimer = setTimeout(flushTrades, 400);
 }
+window.addEventListener('pagehide', ()=>{ stampAndBackup(); flushTrades(); });
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden'){ stampAndBackup(); flushTrades(); } });
 
 let openTradeId = null;
 let openStage = null;
