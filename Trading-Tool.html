@@ -1277,13 +1277,6 @@ function renderCheckStage(t){
   locWrap.appendChild(confWrap);
   b.appendChild(locWrap);
 
-  const validWrap = document.createElement('div'); validWrap.style.cssText='margin-top:22px;padding-top:22px;border-top:1px solid var(--line-soft);';
-  validWrap.appendChild(Object.assign(document.createElement('div'),{textContent:'Validity',className:'sub-label'}));
-  const row1 = document.createElement('div');
-  choiceRow(row1, [{v:'yes',label:'Valid & at extreme'},{v:'no',label:'Not yet / mid-range'}], c.valid==='yes'&&c.extreme==='yes'?'yes':(c.valid==='no'||c.extreme==='no'?'no':null),
-    v=>{ c.valid=v; c.extreme=v; persist(); }, true);
-  validWrap.appendChild(row1);
-  b.appendChild(validWrap);
   if(noBias) while(wrap.children.length>setupStart) wrap.removeChild(wrap.lastChild);
 
   /* ---- Target & Level playbook (collapsed until clicked) ---- */
@@ -1345,9 +1338,10 @@ function renderCheckStage(t){
     /* 2 — look left */
     b2 = qBlock('Look left on the chart. Is the market…', null, body);
     const llRow = document.createElement('div');
+    const isLong = t.dir==='long';
     choiceRow(llRow, [
-      {v:'A',label:'Moving lower into prior resistance / higher into prior support'},
-      {v:'B',label:'Moving lower into prior support / higher into prior resistance'}
+      {v:'A',label: isLong ? 'Moving lower into prior resistance' : 'Moving higher into prior support'},
+      {v:'B',label: isLong ? 'Moving lower into prior support' : 'Moving higher into prior resistance'}
     ], c.lookLeft, v=>{ c.lookLeft=v; persist(); }, false);
     b2.appendChild(llRow);
 
@@ -1511,7 +1505,6 @@ function renderCheckStage(t){
 
   /* simple demo verdict */
   const flags = [];
-  if(c.valid==='no') flags.push('nogo');
   if(c.candleOk==='no') flags.push('nogo');
   if(c.context==='conflict') flags.push('nogo');
   if(c.mindset==='forcing') flags.push('nogo');
@@ -1886,7 +1879,7 @@ function mgmtDetailPairs(e){
 function mgmtSummary(e){
   const bits = mgmtDetailPairs(e).map(([k,v])=>k+': '+v);
   if(e.note) bits.push('Note: '+e.note);
-  if(e.eval && e.eval.verdict) bits.push('Rated: '+({good:'good decision',ok:'neutral',poor:'not the best decision'}[e.eval.verdict]||e.eval.verdict)+(e.eval.note?' ('+e.eval.note+')':''));
+  if(e.eval && e.eval.verdict) bits.push('Rated: '+({good:'good decision',ok:'neutral',poor:'not the best decision'}[e.eval.verdict]||e.eval.verdict)+(e.eval.note?' ('+e.eval.note+')':'') + ((e.eval.rIfHeld!==undefined && e.eval.rIfHeld!=='')?' | R if held: '+e.eval.rIfHeld:''));
   return e.kind+' — '+bits.join(' | ');
 }
 function mgmtEntryEl(e){
@@ -1963,6 +1956,8 @@ function openMgmtPrompt(t, kind){
     const meaningful = Object.keys(data).filter(k=>k!=='oldStop').length>0 || note;
     if(!meaningful) return;
     t.mgmtLog.push({ ts:Date.now(), kind, note, data, eval:null });
+    /* the exit price typed while cutting is the trade's exit price — no need to type it again in the Journal */
+    if(kind==='Cut Trade' && data.price){ if(!t.closeData) t.closeData = {}; t.closeData.exitPrice = data.price; }
     persist(); renderJourney();
   });
   row.appendChild(save);
@@ -2137,6 +2132,25 @@ function renderJournalStage(t){
       en.value = (e.eval && e.eval.note) || '';
       en.addEventListener('input', ()=>{ if(!e.eval) e.eval={verdict:null,note:''}; e.eval.note = en.value; persist(); });
       box.appendChild(en);
+      if(e.kind==='Cut Trade'){
+        const heldRow = document.createElement('div'); heldRow.style.cssText='margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
+        const hl = document.createElement('span'); hl.className='sub-label'; hl.style.margin='0'; hl.textContent='R if I hadn’t cut';
+        const hi = document.createElement('input'); hi.type='text'; hi.placeholder='e.g. +2.5 or -1'; hi.style.cssText='width:120px;';
+        hi.value = (e.eval && e.eval.rIfHeld!=null) ? e.eval.rIfHeld : '';
+        const out = document.createElement('span'); out.style.cssText='font-size:13px;';
+        const upd = ()=>{
+          const held = parseFloat(String(hi.value).replace(',','.'));
+          const act = parseFloat(String(t.closeData.rMultiple||'').replace(',','.'));
+          if(isNaN(held) || isNaN(act)){ out.textContent=''; return; }
+          const diff = act - held;
+          out.style.color = diff>=0 ? 'var(--go)' : 'var(--nogo)';
+          out.textContent = diff>=0 ? 'Cutting saved '+diff.toFixed(2)+'R' : 'Cutting cost '+Math.abs(diff).toFixed(2)+'R';
+        };
+        hi.addEventListener('input', ()=>{ if(!e.eval) e.eval={verdict:null,note:''}; e.eval.rIfHeld = hi.value; upd(); persist(); });
+        upd();
+        heldRow.appendChild(hl); heldRow.appendChild(hi); heldRow.appendChild(out);
+        box.appendChild(heldRow);
+      }
       item.appendChild(box);
       mgmtRecap.appendChild(item);
     });
@@ -2806,13 +2820,65 @@ function buildMonthlyRChart(rows){
   return wrap;
 }
 
+/* Stats period: all time, or one day / week (Mon–Sun) / month, with ◀ ▶ to step
+   back to earlier periods. Filters by the trade's close time. */
+let statsPeriod = 'all';
+let statsOffset = 0;
+function statsRange(){
+  if(statsPeriod==='all') return null;
+  const now = new Date();
+  let start, end, label;
+  if(statsPeriod==='day'){
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate()+statsOffset);
+    end = new Date(start.getFullYear(), start.getMonth(), start.getDate()+1);
+    label = start.toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit',year:'numeric'});
+  }else if(statsPeriod==='week'){
+    const dow = (now.getDay()+6)%7;
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate()-dow+7*statsOffset);
+    end = new Date(start.getFullYear(), start.getMonth(), start.getDate()+7);
+    const last = new Date(end.getTime()-86400000);
+    label = start.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})+' – '+last.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'});
+  }else{
+    start = new Date(now.getFullYear(), now.getMonth()+statsOffset, 1);
+    end = new Date(start.getFullYear(), start.getMonth()+1, 1);
+    label = start.toLocaleDateString('de-DE',{month:'long',year:'numeric'});
+  }
+  return { start:start.getTime(), end:end.getTime(), label };
+}
+function buildStatsPeriodBar(){
+  const bar = document.createElement('div'); bar.className='filter-row'; bar.style.alignItems='center';
+  [['all','All time'],['day','Daily'],['week','Weekly'],['month','Monthly']].forEach(([v,l])=>{
+    const chip = document.createElement('div'); chip.className='opt'+(statsPeriod===v?' selected':''); chip.textContent=l;
+    chip.addEventListener('click', ()=>{ statsPeriod=v; statsOffset=0; renderStats(); });
+    bar.appendChild(chip);
+  });
+  const rg = statsRange();
+  if(rg){
+    const mk = (txt,delta,dis)=>{ const b=document.createElement('button'); b.className='export-btn'; b.textContent=txt; b.disabled=dis; if(dis) b.style.opacity='.4'; b.addEventListener('click',()=>{ statsOffset+=delta; renderStats(); }); return b; };
+    bar.appendChild(mk('◀',-1,false));
+    const lab = document.createElement('span'); lab.style.cssText='font-family:var(--mono);font-size:12.5px;color:var(--ink-dim);'; lab.textContent = rg.label;
+    bar.appendChild(lab);
+    bar.appendChild(mk('▶',1,statsOffset>=0));
+  }
+  return bar;
+}
+
 function renderStats(){
   const container = document.getElementById('statsContent');
   container.innerHTML = '';
-  const rows = journaledTrades();
+  const allRows = journaledTrades();
 
-  if(rows.length===0){
+  if(allRows.length===0){
     container.innerHTML = '<div class="panel" style="text-align:center;color:var(--ink-faint);font-size:13px;">No journaled trades yet — stats show up once a few trades are closed and saved.</div>';
+    return;
+  }
+  container.appendChild(buildStatsPeriodBar());
+  const rg = statsRange();
+  const rows = rg ? allRows.filter(t=>{ const ms=t.closeData.closedAtMs; return ms && ms>=rg.start && ms<rg.end; }) : allRows;
+  if(rows.length===0){
+    const emp = document.createElement('div'); emp.className='panel'; emp.style.cssText='text-align:center;color:var(--ink-faint);font-size:13px;margin-top:14px;';
+    emp.textContent = 'No closed trades in this period.';
+    container.appendChild(emp);
     return;
   }
 
@@ -2980,6 +3046,37 @@ function renderStats(){
   if(byLocation.length) container.appendChild(buildStatTable('By Location', byLocation, 'Location', Infinity, 'location'));
   const mgmtPanel = buildMgmtStatTable(rows);
   if(mgmtPanel) container.appendChild(mgmtPanel);
+  const cutPanel = buildCutCompare(rows);
+  if(cutPanel) container.appendChild(cutPanel);
+}
+
+/* Cut decisions with a filled-in "R if I hadn't cut": what those trades really
+   returned vs. what they would have returned without cutting. */
+function buildCutCompare(rows){
+  let n=0, actual=0, held=0, saved=0, cost=0;
+  rows.forEach(t=>{
+    const r = parseFloat(String(t.closeData.rMultiple||'').replace(',','.'));
+    if(isNaN(r)) return;
+    t.mgmtLog.filter(e=>e.kind==='Cut Trade' && e.eval && e.eval.rIfHeld!==undefined && e.eval.rIfHeld!=='').forEach(e=>{
+      const h = parseFloat(String(e.eval.rIfHeld).replace(',','.'));
+      if(isNaN(h)) return;
+      n++; actual+=r; held+=h;
+      if(r-h>=0) saved++; else cost++;
+    });
+  });
+  if(!n) return null;
+  const diff = actual-held;
+  const f = v=>(v>=0?'+':'')+v.toFixed(2)+'R';
+  const wrap = document.createElement('div'); wrap.className='panel'; wrap.style.marginTop='14px';
+  wrap.innerHTML = `<div class="panel-label">Cutting vs. holding <span class="sub-hint">only cut trades where you entered “R if I hadn’t cut”</span></div>
+    <div class="stat-row">
+      <div class="stat-tile"><div class="k">Cut trades rated</div><div class="v">${n}</div></div>
+      <div class="stat-tile"><div class="k">Total R with cuts</div><div class="v ${actual>=0?'pos':'neg'}">${f(actual)}</div></div>
+      <div class="stat-tile"><div class="k">Total R without cuts</div><div class="v ${held>=0?'pos':'neg'}">${f(held)}</div></div>
+      <div class="stat-tile"><div class="k">Cutting made</div><div class="v ${diff>=0?'pos':'neg'}">${f(diff)}</div></div>
+    </div>
+    <div class="panel-sub" style="margin-top:10px;">Good cuts (saved R): ${saved} · Costly cuts: ${cost} · Avg per cut: ${f(diff/n)}</div>`;
+  return wrap;
 }
 
 /* How your in-trade decisions (add / stop moves / cuts) actually worked out:
@@ -2987,7 +3084,7 @@ function renderStats(){
 function buildMgmtStatTable(rows){
   const kinds = ['Add','Adjust Stop','Cut Trade'];
   const stat = {};
-  kinds.forEach(k=> stat[k] = { uses:0, trades:0, totalR:0, rN:0, good:0, ok:0, poor:0, unrated:0 });
+  kinds.forEach(k=> stat[k] = { diff:0, diffN:0, uses:0, trades:0, totalR:0, rN:0, good:0, ok:0, poor:0, unrated:0 });
   rows.forEach(t=>{
     const r = parseFloat((t.closeData.rMultiple||'').replace(',','.'));
     kinds.forEach(k=>{
@@ -2996,7 +3093,13 @@ function buildMgmtStatTable(rows){
       const g = stat[k];
       g.uses += es.length; g.trades++;
       if(!isNaN(r)){ g.totalR += r; g.rN++; }
-      es.forEach(e=>{ const v=(e.eval&&e.eval.verdict)||'unrated'; g[v]++; });
+      es.forEach(e=>{
+        const v=(e.eval&&e.eval.verdict)||'unrated'; g[v]++;
+        if(k==='Cut Trade' && e.eval && e.eval.rIfHeld!==undefined && !isNaN(r)){
+          const held = parseFloat(String(e.eval.rIfHeld).replace(',','.'));
+          if(!isNaN(held)){ g.diff += r - held; g.diffN++; }
+        }
+      });
     });
   });
   if(!kinds.some(k=>stat[k].uses>0)) return null;
@@ -3004,7 +3107,7 @@ function buildMgmtStatTable(rows){
   wrap.innerHTML = '<div class="panel-label">Management Decisions <span class="sub-hint">click a row to see those trades in the Journal</span></div>';
   const tw = document.createElement('div'); tw.className='table-wrap';
   const table = document.createElement('table'); table.className='rv-table';
-  table.innerHTML = `<thead><tr><th>Decision</th><th style="text-align:right;">Times</th><th style="text-align:right;">Trades</th><th style="text-align:right;">Avg R of those trades</th><th style="text-align:right;">Good</th><th style="text-align:right;">Neutral</th><th style="text-align:right;">Not the best</th><th style="text-align:right;">Not rated</th></tr></thead>`;
+  table.innerHTML = `<thead><tr><th>Decision</th><th style="text-align:right;">Times</th><th style="text-align:right;">Trades</th><th style="text-align:right;">Avg R of those trades</th><th style="text-align:right;">Good</th><th style="text-align:right;">Neutral</th><th style="text-align:right;">Not the best</th><th style="text-align:right;">Not rated</th><th style="text-align:right;">Cut vs. holding</th></tr></thead>`;
   const tb = document.createElement('tbody');
   kinds.forEach(k=>{
     const g = stat[k]; if(!g.uses) return;
@@ -3013,7 +3116,8 @@ function buildMgmtStatTable(rows){
     tr.innerHTML = `<td>${({'Add':'Added to','Adjust Stop':'Stop adjusted','Cut Trade':'Cut'})[k]}</td>
       <td style="text-align:right;">${g.uses}</td><td style="text-align:right;">${g.trades}</td>
       <td class="rv-r ${avg!=null&&avg<0?'neg':'pos'}" style="text-align:right;">${avg==null?'—':(avg>=0?'+':'')+avg.toFixed(2)+'R'}</td>
-      <td style="text-align:right;">${g.good}</td><td style="text-align:right;">${g.ok}</td><td style="text-align:right;">${g.poor}</td><td style="text-align:right;">${g.unrated}</td>`;
+      <td style="text-align:right;">${g.good}</td><td style="text-align:right;">${g.ok}</td><td style="text-align:right;">${g.poor}</td><td style="text-align:right;">${g.unrated}</td>
+      <td class="rv-r ${g.diff>=0?'pos':'neg'}" style="text-align:right;">${k==='Cut Trade' && g.diffN ? (g.diff>=0?'+':'')+g.diff.toFixed(2)+'R <span class="rv-sub">('+g.diffN+' rated)</span>' : '—'}</td>`;
     tr.addEventListener('click', ()=> openReviewFiltered('mgmt', k));
     tb.appendChild(tr);
   });
