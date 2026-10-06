@@ -465,13 +465,67 @@ const firebaseConfig = {
 let fbDb = null;
 let firebaseReady = Promise.resolve(false);
 
+/* ---------- Login ----------
+   The app no longer signs everyone in anonymously. Cloud access needs a real
+   account (email + password created once in the Firebase console), so the
+   Firestore rules can be limited to just you. Until you're signed in,
+   firebaseReady stays pending and nothing is loaded. */
+function showLogin(msg){
+  let ov = document.getElementById('loginOverlay');
+  if(!ov){
+    ov = document.createElement('div'); ov.id='loginOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:10000;background:var(--bg, #0b0d12);display:flex;align-items:center;justify-content:center;padding:20px;';
+    ov.innerHTML = `
+      <div style="width:100%;max-width:340px;background:var(--panel, #12151c);border:1px solid var(--line, #262b36);border-radius:12px;padding:26px;">
+        <div style="font-family:var(--mono);font-weight:700;letter-spacing:.08em;font-size:13px;margin-bottom:6px;">TRADE JOURNEY</div>
+        <div style="color:var(--ink-dim);font-size:13px;margin-bottom:18px;">Sign in to open your journal.</div>
+        <div class="field"><label>Email</label><input type="email" id="loginEmail" autocomplete="username"></div>
+        <div class="field" style="margin-top:10px;"><label>Password</label><input type="password" id="loginPw" autocomplete="current-password"></div>
+        <div id="loginMsg" style="color:var(--nogo, #e5646e);font-size:12.5px;min-height:18px;margin-top:10px;"></div>
+        <button class="btn primary" id="loginBtn" style="width:100%;margin-top:6px;">Sign in</button>
+      </div>`;
+    document.body.appendChild(ov);
+    const go = async ()=>{
+      const email = document.getElementById('loginEmail').value.trim();
+      const pw = document.getElementById('loginPw').value;
+      const m = document.getElementById('loginMsg');
+      if(!email || !pw){ m.textContent = 'Enter email and password.'; return; }
+      m.textContent = ''; const btn = document.getElementById('loginBtn'); btn.disabled = true; btn.textContent = 'Signing in…';
+      try{ await firebase.auth().signInWithEmailAndPassword(email, pw); }
+      catch(e){
+        const bad = ['auth/invalid-credential','auth/wrong-password','auth/user-not-found','auth/invalid-email'];
+        m.textContent = bad.includes(e.code) ? 'Email or password is wrong.' : ('Sign-in failed ('+(e.code||e.message)+').');
+        btn.disabled = false; btn.textContent = 'Sign in';
+      }
+    };
+    document.getElementById('loginBtn').addEventListener('click', go);
+    ov.addEventListener('keydown', e=>{ if(e.key==='Enter') go(); });
+  }
+  if(msg) document.getElementById('loginMsg').textContent = msg;
+}
+function hideLogin(){ const ov = document.getElementById('loginOverlay'); if(ov) ov.remove(); }
+function showSignOut(){
+  if(document.getElementById('signOutLink')) return;
+  const b = document.createElement('button'); b.id='signOutLink'; b.textContent='Sign out';
+  b.style.cssText = 'position:fixed;left:14px;bottom:14px;z-index:900;background:none;border:none;color:var(--ink-faint, #6b7280);font-size:11.5px;cursor:pointer;font-family:var(--mono);';
+  b.addEventListener('click', async ()=>{ try{ await firebase.auth().signOut(); }catch(e){} location.reload(); });
+  document.body.appendChild(b);
+}
+
 if(typeof firebase !== 'undefined'){
   try{
     firebase.initializeApp(firebaseConfig);
     fbDb = firebase.firestore();
-    firebaseReady = firebase.auth().signInAnonymously()
-      .then(()=> true)
-      .catch((e)=>{ console.warn('Firebase Anmeldung fehlgeschlagen, nutze Fallback:', e); return false; });
+    firebaseReady = new Promise(resolve=>{
+      firebase.auth().onAuthStateChanged(user=>{
+        if(user && !user.isAnonymous){ hideLogin(); showSignOut(); resolve(true); }
+        else{
+          /* an old anonymous session from before the login existed doesn't count */
+          if(user && user.isAnonymous) firebase.auth().signOut().catch(()=>{});
+          showLogin();
+        }
+      });
+    });
   }catch(e){
     console.warn('Firebase Initialisierung fehlgeschlagen, nutze Fallback:', e);
   }
