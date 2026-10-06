@@ -1672,12 +1672,21 @@ function renderPlanStage(t){
     trigWrap.appendChild(Object.assign(document.createElement('div'),{className:'panel-sub',textContent:'You chose to wait for price action at the level — which one did you enter on?'}));
   }
   const isLongT = t.dir==='long';
-  const TRIGGERS = [
-    { v:'Hammer / Shooting Star + Thrust', hint: isLongT ? 'Entry = high of the Hammer' : 'Entry = low of the Shooting Star' },
-    { v:'Bullish / Bearish Engulfing',     hint: isLongT ? 'Entry = high before the engulfing candle' : 'Entry = low before the engulfing candle' },
-    { v:'Inside Hour Failure',             hint: '' },
-    { v:'Limit order at level',            hint: 'No price action — resting order at the level' }
+  /* only triggers that fit the trade's direction */
+  const TRIGGERS = isLongT ? [
+    { v:'Hammer + Thrust',     hint:'Entry = high of the Hammer' },
+    { v:'Bullish Engulfing',   hint:'Entry = high before the engulfing candle' },
+    { v:'Inside Hour Failure', hint:'' },
+    { v:'Limit order at level',hint:'No price action — resting order at the level' }
+  ] : [
+    { v:'Shooting Star + Thrust', hint:'Entry = low of the Shooting Star' },
+    { v:'Bearish Engulfing',      hint:'Entry = low before the engulfing candle' },
+    { v:'Inside Hour Failure',    hint:'' },
+    { v:'Limit order at level',   hint:'No price action — resting order at the level' }
   ];
+  /* map values saved by the earlier direction-neutral version */
+  if(t.plan.entryPA==='Hammer / Shooting Star + Thrust') t.plan.entryPA = TRIGGERS[0].v;
+  if(t.plan.entryPA==='Bullish / Bearish Engulfing') t.plan.entryPA = TRIGGERS[1].v;
   const trigRow = document.createElement('div'); trigRow.className='opt-row';
   TRIGGERS.forEach(o=>{
     const chip = document.createElement('div');
