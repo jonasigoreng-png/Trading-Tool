@@ -1663,6 +1663,33 @@ function renderPlanStage(t){
     grid.appendChild(f);
   });
   panel.appendChild(grid);
+
+  /* Which price action actually triggered the entry — tracked per trade so the
+     Stats can show which entry style works. */
+  const trigWrap = document.createElement('div'); trigWrap.style.cssText='margin-top:20px;padding-top:20px;border-top:1px solid var(--line-soft);';
+  trigWrap.appendChild(Object.assign(document.createElement('div'),{className:'sub-label',textContent:'Entry trigger (price action)'}));
+  if(t.check && t.check.noNakedPlan==='wait'){
+    trigWrap.appendChild(Object.assign(document.createElement('div'),{className:'panel-sub',textContent:'You chose to wait for price action at the level — which one did you enter on?'}));
+  }
+  const isLongT = t.dir==='long';
+  const TRIGGERS = [
+    { v:'Hammer / Shooting Star + Thrust', hint: isLongT ? 'Entry = high of the Hammer' : 'Entry = low of the Shooting Star' },
+    { v:'Bullish / Bearish Engulfing',     hint: isLongT ? 'Entry = high before the engulfing candle' : 'Entry = low before the engulfing candle' },
+    { v:'Inside Hour Failure',             hint: '' },
+    { v:'Limit order at level',            hint: 'No price action — resting order at the level' }
+  ];
+  const trigRow = document.createElement('div'); trigRow.className='opt-row';
+  TRIGGERS.forEach(o=>{
+    const chip = document.createElement('div');
+    chip.className = 'opt' + (t.plan.entryPA===o.v ? ' selected' : '');
+    chip.textContent = o.v;
+    chip.addEventListener('click', ()=>{ t.plan.entryPA = (t.plan.entryPA===o.v ? '' : o.v); persist(); renderJourney(); });
+    trigRow.appendChild(chip);
+  });
+  trigWrap.appendChild(trigRow);
+  const sel = TRIGGERS.find(o=>o.v===t.plan.entryPA);
+  if(sel && sel.hint) trigWrap.appendChild(Object.assign(document.createElement('div'),{className:'panel-sub',style:'margin-top:10px;',textContent:sel.hint}));
+  panel.appendChild(trigWrap);
   outer.appendChild(panel);
 
   const FTA_ACTIONS = ['Move Stop','Add','Further Evaluation','2nd Chance Entry'];
@@ -2126,6 +2153,7 @@ function renderJournalStage(t){
     <div class="jd-row"><div class="jd-label">Entry (Plan)</div><div class="jd-value">${escapeHtml(t.plan.entry||'—')}</div></div>
     <div class="jd-row"><div class="jd-label">Stop (Plan)</div><div class="jd-value">${escapeHtml(t.plan.stop||'—')}</div></div>
     <div class="jd-row"><div class="jd-label">Target (Plan)</div><div class="jd-value">${escapeHtml(t.plan.target||'—')}</div></div>
+    <div class="jd-row"><div class="jd-label">Entry trigger</div><div class="jd-value">${escapeHtml(t.plan.entryPA||'—')}</div></div>
     <div class="jd-row"><div class="jd-label">Mindset going in</div><div class="jd-value">${escapeHtml(t.check.mindset||'—')}</div></div>
   `;
   recapPanel.appendChild(recap);
@@ -2315,6 +2343,7 @@ function matchesReviewExtra(t){
   if(type==='combo') return [...patternsOf(t)].sort().join(' + ')===value;
   if(type==='direction') return (t.dir==='long'?'Long':'Short')===value;
   if(type==='location') return !!(t.check && t.check.whereTags && t.check.whereTags.includes(value));
+  if(type==='trigger') return (t.plan && t.plan.entryPA)===value;
   return true;
 }
 
@@ -2367,7 +2396,7 @@ function renderReview(){
   const filterRow = document.createElement('div'); filterRow.className='filter-row';
 
   if(reviewFilterExtra){
-    const FILTER_LABEL = { setup:'Setup', combo:'Combo', direction:'Direction', location:'Location' };
+    const FILTER_LABEL = { setup:'Setup', combo:'Combo', direction:'Direction', location:'Location', trigger:'Entry trigger' };
     const chip = document.createElement('div'); chip.className = 'filter-chip';
     chip.innerHTML = `${FILTER_LABEL[reviewFilterExtra.type]}: ${escapeHtml(reviewFilterExtra.value)} <button title="Clear filter">✕</button>`;
     chip.querySelector('button').addEventListener('click', ()=>{ reviewFilterExtra = null; renderReview(); });
@@ -2480,6 +2509,7 @@ function exportJournalToExcel(rows){
     'PNL': t.closeData.pnl || '',
     'Fees': t.closeData.fees || '',
     'Net PNL': t.closeData.netPnl || '',
+    'Entry Trigger': t.plan.entryPA || '',
     'Mgmt Actions': t.mgmtLog.length,
     'Mgmt Detail': t.mgmtLog.map(mgmtSummary).join('  ||  '),
     'Evaluation': t.journal.evalNote || ''
@@ -3073,6 +3103,8 @@ function renderStats(){
   container.appendChild(buildStatTable('By Asset', byAsset, 'Asset', Infinity, 'asset'));
   container.appendChild(buildStatTable('By Direction', byDir, 'Direction', Infinity, 'direction'));
   if(byLocation.length) container.appendChild(buildStatTable('By Location', byLocation, 'Location', Infinity, 'location'));
+  const byTrigger = groupStats(rows, t=> (t.plan && t.plan.entryPA) ? [t.plan.entryPA] : []);
+  if(byTrigger.length) container.appendChild(buildStatTable('By Entry Trigger', byTrigger, 'Entry trigger', Infinity, 'trigger'));
   const mgmtPanel = buildMgmtStatTable(rows);
   if(mgmtPanel) container.appendChild(mgmtPanel);
   const cutPanel = buildCutCompare(rows);
