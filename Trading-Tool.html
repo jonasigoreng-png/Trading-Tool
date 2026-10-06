@@ -294,6 +294,11 @@ input[type=text]:focus, textarea:focus, select:focus{ outline:none; border-color
 .log-top{ display:flex; justify-content:space-between; font-family:var(--mono); font-size:11.5px; font-weight:600; color:var(--ink-dim); margin-bottom:6px; }
 .log-kind{ color:var(--accent); font-weight:700; }
 .log-note{ font-size:13.5px; color:var(--ink); line-height:1.5; }
+.log-detail{ font-size:12.5px; color:var(--ink-dim); margin-top:3px; line-height:1.5; }
+.log-detail b{ font-family:var(--mono); font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-faint); font-weight:600; margin-right:6px; }
+.log-del{ background:none; border:none; color:var(--ink-faint); font-size:11.5px; cursor:pointer; padding:0; margin-top:6px; }
+.log-del:hover{ color:var(--nogo); }
+.eval-box{ margin-top:12px; padding:12px 14px; border:1px dashed var(--line-soft); border-radius:8px; }
 
 /* Journal */
 .jd-row{ padding:12px 0; border-bottom:1px solid var(--line-soft); }
@@ -1172,9 +1177,16 @@ function renderJourney(){
    confluence -> one rating + note, interference -> two questions
    instead of ten, mindset -> one scale + one note.
 --------------------------------------------------------------------- */
+let checkSecOpen = {};
 function renderCheckStage(t){
   const wrap = document.createElement('div');
   const c = t.check;
+  /* Flow depends on the bias: Weekly/Daily → location first, then level grading.
+     No bias → only an H1 level matters: patterns/location/candle shape drop out
+     and you go straight to grading the level. Not chosen yet (fresh trade) →
+     only the Asset / Direction / Bias panel until you pick. */
+  const noBias = t.bias==='none';
+  const unsetBias = !t.bias && stageIndex(t.stage)===0;
 
   function choiceRow(container, opts, current, onPick, negClass){
     const row = document.createElement('div');
@@ -1204,7 +1216,7 @@ function renderCheckStage(t){
     return row;
   }
 
-  function qBlock(title, facts){
+  function qBlock(title, facts, parent){
     const b = document.createElement('div');
     b.className = 'qblock';
     const q = document.createElement('div');
@@ -1217,10 +1229,11 @@ function renderCheckStage(t){
       facts.forEach(f=>{ const li=document.createElement('li'); li.textContent=f; ul.appendChild(li); });
       b.appendChild(ul);
     }
-    wrap.appendChild(b);
+    (parent||wrap).appendChild(b);
     return b;
   }
 
+  const setupStart = wrap.children.length;
   wrap.appendChild(Object.assign(document.createElement('div'),{className:'section-div',textContent:'Setup & Validity'}));
   let b = qBlock('Where does the setup happen, and is it valid now?', [
     'Name the zone/level — no nameable structural reason = skip',
@@ -1271,10 +1284,166 @@ function renderCheckStage(t){
     v=>{ c.valid=v; c.extreme=v; persist(); }, true);
   validWrap.appendChild(row1);
   b.appendChild(validWrap);
+  if(noBias) while(wrap.children.length>setupStart) wrap.removeChild(wrap.lastChild);
+
+  /* ---- Target & Level playbook (collapsed until clicked) ---- */
+  function collSection(key, title, summary, build){
+    const box = document.createElement('div');
+    box.style.cssText = 'border:1px solid var(--line-soft);border-radius:10px;margin:24px 0 4px;overflow:hidden;';
+    const open = checkSecOpen[key] !== false;
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:10px;padding:14px 16px;cursor:pointer;';
+    head.innerHTML = '<span style="font-family:var(--mono);font-size:12px;color:var(--ink-dim);width:12px;">'+(open?'▾':'▸')+'</span>'
+      + '<span style="flex:1;font-weight:600;">'+escapeHtml(title)+'</span>'
+      + '<span style="font-family:var(--mono);font-size:11px;color:var(--ink-dim);text-align:right;">'+escapeHtml(summary)+'</span>';
+    head.addEventListener('click', ()=>{ checkSecOpen[key] = !open; renderJourney(); });
+    box.appendChild(head);
+    if(open){
+      const body = document.createElement('div');
+      body.style.cssText = 'padding:4px 16px 18px;border-top:1px solid var(--line-soft);';
+      build(body);
+      box.appendChild(body);
+    }
+    wrap.appendChild(box);
+  }
+  function noteInput(parent, field, ph){
+    const i = document.createElement('input'); i.type='text'; i.placeholder=ph; i.style.marginTop='14px'; i.value=c[field]||'';
+    i.addEventListener('input', ()=>{ c[field]=i.value; persist(); });
+    parent.appendChild(i);
+  }
+  const YN = [{v:'yes',label:'Yes'},{v:'no',label:'No'}];
+  const GRADE_NEED = {'1':2,'2':1,'3':0};
+  if(!c.gradeConf) c.gradeConf = [];
+  const nConf = c.gradeConf.length;
+  const gradeMet = !c.levelRating || !c.gradeConfTouched ? true : nConf >= GRADE_NEED[c.levelRating];
+
+  const sumParts = [];
+  if(c.targetTF) sumParts.push({bias:'Target: bias TF',h1:'Target: H1',preempt:'Pre-empting'}[c.targetTF]);
+  if(c.levelRating) sumParts.push('Grade '+c.levelRating);
+  if(c.naked) sumParts.push(c.naked==='yes'?'naked ✓':'not naked');
+  wrap.appendChild(Object.assign(document.createElement('div'),{className:'section-div',textContent: noBias ? 'Grade the H1 Level' : 'Grade the Level'}));
+  collSection('playbook', 'Level & Target', sumParts.join(' · ') || 'click to open', body=>{
+    /* 1 — target timeframe (only asked without a bias; with a Weekly/Daily bias the target follows it) */
+    const biasName = t.bias==='weekly' ? 'Weekly' : (t.bias==='daily' ? 'Daily' : null);
+    let b2;
+    if(!biasName){
+      b2 = qBlock('Which timeframe is your target based on?', [
+        'No bias → examine H1 levels to trade',
+        'Target is based on H1 here too',
+        'Exception: only when pre-empting a daily/weekly bias can the target be based on that'
+      ], body);
+      const tfRow = document.createElement('div');
+      choiceRow(tfRow, [{v:'h1',label:'H1 target'},{v:'preempt',label:'Pre-empting a daily/weekly bias'}], c.targetTF, v=>{ c.targetTF=v; persist(); }, false);
+      b2.appendChild(tfRow);
+    } else {
+      b2 = qBlock('Which H1 level do you want to enter at?', null, body);
+    }
+    const lvl = document.createElement('input'); lvl.type='text'; lvl.placeholder='H1 level you want to enter at, e.g. retest of LHPB level...'; lvl.style.marginTop='14px'; lvl.value=c.entryLevel||'';
+    lvl.addEventListener('input', ()=>{ c.entryLevel=lvl.value; persist(); });
+    b2.appendChild(lvl);
+
+    /* 2 — look left */
+    b2 = qBlock('Look left on the chart. Is the market…', null, body);
+    const llRow = document.createElement('div');
+    choiceRow(llRow, [
+      {v:'A',label:'Moving lower into prior resistance / higher into prior support'},
+      {v:'B',label:'Moving lower into prior support / higher into prior resistance'}
+    ], c.lookLeft, v=>{ c.lookLeft=v; persist(); }, false);
+    b2.appendChild(llRow);
+
+    if(c.lookLeft==='A'){
+      b2 = qBlock('Grade the level 1–3', [
+        'Number of touches near or on the level',
+        'Violence of the reactions from the level',
+        'Time price has spent there',
+        'Level visible on a higher timeframe'
+      ], body);
+      const gRow = document.createElement('div');
+      choiceRow(gRow, [
+        {v:'1',label:'Grade 1 — needs ≥ 2 confluences'},
+        {v:'2',label:'Grade 2 — needs ≥ 1 confluence'},
+        {v:'3',label:'Grade 3 — no extra confluence needed'}
+      ], c.levelRating, v=>{ c.levelRating=v; c.gradeConfTouched=true; persist(); }, false);
+      b2.appendChild(gRow);
+      const cl = document.createElement('div'); cl.style.cssText='margin-top:14px;';
+      cl.appendChild(Object.assign(document.createElement('div'),{textContent:'Confluence present',className:'sub-label'}));
+      multiChipRow(cl, ['W1/D1 bias','Fibonacci','ATR'], c.gradeConf, val=>{
+        const i = c.gradeConf.indexOf(val);
+        if(i>-1) c.gradeConf.splice(i,1); else c.gradeConf.push(val);
+        c.gradeConfTouched = true;
+        persist();
+      });
+      b2.appendChild(cl);
+      if(c.levelRating){
+        const need = GRADE_NEED[c.levelRating];
+        const ok = nConf >= need;
+        const msg = document.createElement('div');
+        msg.style.cssText = 'margin-top:12px;font-size:13px;color:var(--'+(ok?'go':'wait')+');';
+        msg.textContent = need===0 ? 'Grade 3: no extra confluence needed ✓'
+          : (ok ? 'Confluence requirement met ('+nConf+' / '+need+') ✓' : 'Grade '+c.levelRating+' needs at least '+need+' confluence factor'+(need>1?'s':'')+' — you have '+nConf+'. Wait.');
+        b2.appendChild(msg);
+      }
+      noteInput(b2, 'levelNote', 'Optional note (touches, reactions, time spent)...');
+    } else if(c.lookLeft==='B'){
+      b2 = qBlock('How many times has the market previously reacted to this level?', null, body);
+      const rRow = document.createElement('div');
+      choiceRow(rRow, [{v:'first',label:'First time back'},{v:'few',label:'A few times'},{v:'many',label:'Many times'}], c.reactions, v=>{ c.reactions=v; persist(); }, false);
+      b2.appendChild(rRow);
+      if(c.reactions==='first'){
+        b2.appendChild(Object.assign(document.createElement('div'),{textContent:'Is it a deep swing?',className:'sub-label',style:'margin-top:14px;'}));
+        const dRow = document.createElement('div');
+        choiceRow(dRow, YN, c.deepSwing, v=>{ c.deepSwing=v; persist(); }, false);
+        b2.appendChild(dRow);
+        if(c.deepSwing==='yes'){
+          const w = document.createElement('div');
+          w.style.cssText='margin-top:12px;font-size:13px;color:var(--wait);';
+          w.textContent='First time back at a deep swing → wait for an SFP to form.';
+          b2.appendChild(w);
+          const sRow = document.createElement('div'); sRow.style.marginTop='10px';
+          choiceRow(sRow, [{v:'waiting',label:'Still waiting'},{v:'formed',label:'SFP formed'}], c.sfp, v=>{ c.sfp=v; persist(); }, false);
+          b2.appendChild(sRow);
+        }
+      }
+      noteInput(b2, 'levelNote', 'Optional note...');
+    }
+
+    /* 3 — naked level, space, stop, R:R */
+    b2 = qBlock('Is the level naked?', ['The most important thing — no price action sitting on it already'], body);
+    const nkRow = document.createElement('div');
+    choiceRow(nkRow, [{v:'yes',label:'Naked'},{v:'no',label:'Not naked'}], c.naked, v=>{ c.naked=v; persist(); }, false);
+    b2.appendChild(nkRow);
+    if(c.naked==='no'){
+      const g = document.createElement('div'); g.style.marginTop='12px';
+      g.appendChild(Object.assign(document.createElement('div'),{textContent:'No naked level — what now?',className:'sub-label'}));
+      choiceRow(g, [{v:'find',label:'Find a naked level in that zone'},{v:'wait',label:'Wait for price action as price approaches'}], c.noNakedPlan, v=>{ c.noNakedPlan=v; persist(); }, false);
+      b2.appendChild(g);
+    }
+
+    b2 = qBlock('Enough space for a rounded retest?', ['Between where price is and your level: at least one H1 candle','No direct retests'], body);
+    const spRow = document.createElement('div');
+    choiceRow(spRow, YN, c.space, v=>{ c.space=v; persist(); }, false);
+    b2.appendChild(spRow);
+
+    b2 = qBlock('Is there a good place for the stop?', null, body);
+    const stRow = document.createElement('div');
+    choiceRow(stRow, YN, c.stopOk, v=>{ c.stopOk=v; persist(); }, false);
+    b2.appendChild(stRow);
+
+    b2 = qBlock('Does it fit your R:R requirements?', null, body);
+    const rrRow = document.createElement('div');
+    choiceRow(rrRow, YN, c.rrOk, v=>{ c.rrOk=v; persist(); }, false);
+    b2.appendChild(rrRow);
+    if(c.space==='no' || c.stopOk==='no' || c.rrOk==='no'){
+      const w = document.createElement('div');
+      w.style.cssText='margin-top:12px;font-size:13px;color:var(--wait);';
+      w.textContent='Not all boxes ticked → wait for price action.';
+      b2.appendChild(w);
+    }
+  });
 
   /* Candle Shape only applies to a real (not-failed) Engulfing pattern — other setups
      don't share this shape, and a failed pattern is judged on the fail itself, not the shape. */
-  if(patternsOf(t).includes('Bullish Engulfing') || patternsOf(t).includes('Bearish Engulfing')){
+  if(!noBias && (patternsOf(t).includes('Bullish Engulfing') || patternsOf(t).includes('Bearish Engulfing'))){
     wrap.appendChild(Object.assign(document.createElement('div'),{className:'section-div',textContent:'Candle Shape'}));
     b = qBlock('Does the candle itself check out?', [
       'Reversal — not continuation, not range',
@@ -1288,21 +1457,6 @@ function renderCheckStage(t){
     note1.addEventListener('input', ()=>{ c.candleNote=note1.value; persist(); });
     b.appendChild(note1);
   }
-
-  wrap.appendChild(Object.assign(document.createElement('div'),{className:'section-div',textContent:'Level & Confluence'}));
-  b = qBlock('How would you rate this level?', [
-    'Untouched previous S/R',
-    'Recent 1h reaction nearby',
-    'ATR / Fibonacci confluence',
-    'Violent reactions off it?',
-    'Higher-timeframe significance?'
-  ]);
-  const row3 = document.createElement('div');
-  choiceRow(row3, [{v:'1',label:'1 — weak'},{v:'2',label:'2'},{v:'3',label:'3 — strong'}], c.levelRating, v=>{ c.levelRating=v; persist(); }, false);
-  b.appendChild(row3);
-  const note2 = document.createElement('input'); note2.type='text'; note2.placeholder='Optional note (recency, confluence detail)...'; note2.style.marginTop='16px'; note2.value=c.levelNote;
-  note2.addEventListener('input', ()=>{ c.levelNote=note2.value; persist(); });
-  b.appendChild(note2);
 
   wrap.appendChild(Object.assign(document.createElement('div'),{className:'section-div',textContent:'Interference & Context'}));
   b = qBlock('How are the Daily EMAs aligned?');
@@ -1340,11 +1494,7 @@ function renderCheckStage(t){
   const row5 = document.createElement('div');
   choiceRow(row5, [{v:'yes',label:'Still fits'},{v:'no',label:'Would flip'}], c.biasOk, v=>{ c.biasOk=v; persist(); }, false);
   b.appendChild(row5);
-
-  b = qBlock('At which level are you planning to enter?');
-  const inp2 = document.createElement('input'); inp2.type='text'; inp2.placeholder='e.g. Retest of LHPB Level, 1h Level...'; inp2.value=c.entryLevel;
-  inp2.addEventListener('input', ()=>{ c.entryLevel=inp2.value; persist(); });
-  b.appendChild(inp2);
+  if(noBias) wrap.removeChild(b);
 
   wrap.appendChild(Object.assign(document.createElement('div'),{className:'section-div',textContent:'Mindset'}));
   b = qBlock('Patient, or forcing this one?', [
@@ -1365,7 +1515,10 @@ function renderCheckStage(t){
   if(c.candleOk==='no') flags.push('nogo');
   if(c.context==='conflict') flags.push('nogo');
   if(c.mindset==='forcing') flags.push('nogo');
-  if(c.levelRating==='1') flags.push('wait');
+  if(c.gradeConfTouched){ if(!gradeMet) flags.push('wait'); }
+  else if(c.levelRating==='1') flags.push('wait');
+  if(c.naked==='no' || c.space==='no' || c.stopOk==='no' || c.rrOk==='no') flags.push('wait');
+  if(c.lookLeft==='B' && c.reactions==='first' && c.deepSwing==='yes' && c.sfp!=='formed') flags.push('wait');
   const verdictClass = flags.includes('nogo') ? 'nogo' : (flags.includes('wait') ? 'wait' : 'go');
   const verdictText = verdictClass==='nogo' ? 'Skip this one' : (verdictClass==='wait' ? 'Worth a second look' : 'Clean setup');
 
@@ -1399,6 +1552,7 @@ function renderCheckStage(t){
   function miniLabel(text){
     const d = document.createElement('div');
     d.style.cssText = 'font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-dim);margin:0 0 10px;';
+    d.textContent = text;
     return d;
   }
   function subGroup(parent, label, prevSibling){
@@ -1435,7 +1589,7 @@ function renderCheckStage(t){
   choiceRow(biasRow, [{v:'weekly',label:'Weekly'},{v:'daily',label:'Daily'},{v:'none',label:'None of them'}], t.bias, v=>{ t.bias=v; persist(); }, false);
   biasGroup.appendChild(biasRow);
 
-  const patGroup = subGroup(headPanel, 'Setup / Pattern', true);
+  const patGroup = noBias ? document.createElement('div') : subGroup(headPanel, 'Setup / Pattern', true);
   const patRow = document.createElement('div');
   multiChipRow(patRow, PATTERNS_BY_DIR[t.dir], t.patterns, v=>{
     const i = t.patterns.indexOf(v);
@@ -1444,7 +1598,7 @@ function renderCheckStage(t){
   });
   patGroup.appendChild(patRow);
 
-  if(t.patterns.includes('Pattern Failure')){
+  if(!noBias && t.patterns.includes('Pattern Failure')){
     const failGroup = subGroup(headPanel, 'Which pattern failed?', true);
     const failRow = document.createElement('div');
     choiceRow(failRow, FAILED_PATTERN_OPTIONS.map(p=>({v:p,label:p})), t.failedPatternType, v=>{ t.failedPatternType=v; persist(); }, false);
@@ -1453,6 +1607,13 @@ function renderCheckStage(t){
 
   const outer = document.createElement('div');
   outer.appendChild(headPanel);
+  if(unsetBias){
+    const hintP = document.createElement('div'); hintP.className='panel';
+    hintP.style.cssText = 'color:var(--ink-dim);font-size:13.5px;';
+    hintP.textContent = 'Pick your bias above to continue — Weekly / Daily takes you through location and level grading, "None of them" goes straight to grading an H1 level.';
+    outer.appendChild(hintP);
+    return outer;
+  }
   outer.appendChild(strip);
   const panel = document.createElement('div'); panel.className='panel';
   panel.appendChild(wrap);
@@ -1626,9 +1787,14 @@ function renderActiveStage(t){
     log.innerHTML = '<div style="color:var(--ink-faint);font-size:12.5px;">No actions logged yet.</div>';
   }else{
     [...t.mgmtLog].reverse().forEach(e=>{
-      const item = document.createElement('div'); item.className='log-item';
-      const d = new Date(e.ts);
-      item.innerHTML = `<div class="log-top"><span class="log-kind">${escapeHtml(e.kind)}</span><span>${d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}</span></div><div class="log-note">${escapeHtml(e.note)}</div>`;
+      const item = mgmtEntryEl(e);
+      const del = document.createElement('button'); del.className='log-del'; del.textContent='Remove entry';
+      del.addEventListener('click', ()=>{
+        if(!confirm('Remove this '+e.kind+' entry?')) return;
+        const i = t.mgmtLog.indexOf(e); if(i>-1) t.mgmtLog.splice(i,1);
+        persist(); renderJourney();
+      });
+      item.appendChild(del);
       log.appendChild(item);
     });
   }
@@ -1660,16 +1826,33 @@ function renderActiveStage(t){
   return outer;
 }
 
-const MGMT_PROMPTS = {
+/* Each management decision is stored as a structured entry:
+   { ts, kind, note, data:{ price,size,keyLevel,oldStop,newStop,... , reasons:[] },
+     eval:{ verdict:'good'|'ok'|'poor', note } }
+   `data` holds the facts (where, how much, new stop...), `eval` is filled in
+   later in the Journal ("further evaluation"). Old entries only have
+   kind + note and keep rendering fine. */
+const MGMT_REASONS = {
+  'Add': ['Retest of broken key level','Candle formation'],
+  'Adjust Stop': ['Thrust through key level','Candle formation','Reduce risk before sleeping','Aggressive move','Reduce risk before news'],
+  'Cut Trade': ['Stronger 1h level forming close to my level','End of day / daily bias turning','News event','Retest from other side - printed new extreme']
+};
+const MGMT_FORMS = {
   'Add': {
     title: 'Where do you want to add? Is it a key level?',
     facts: [],
-    placeholder: 'e.g. Adding at retest of broken 1h level, key level: yes'
+    fields: [['price','Add level / price','e.g. 19,650'],['size','Size added','e.g. 0.5 lots']],
+    yn: [],
+    choices: [],
+    placeholder: 'Reason for adding — optional detail...'
   },
   'Adjust Stop': {
     title: 'What level did we break? Did price move aggressively or slowly?',
     facts: ['Aggressive move → manage aggressively', 'Slow move → give it more room'],
-    placeholder: 'e.g. Broke 1h swing low with a thrust candle, moved fast → stop to breakeven'
+    fields: [['oldStop','Old stop',''],['newStop','New stop (level)','e.g. 19,540'],['levelBroken','Level that was broken','e.g. 1h swing low']],
+    yn: [],
+    choices: [['speed','Price move',['Aggressive','Slow']]],
+    placeholder: 'Reason for moving the stop — optional detail...'
   },
   'Cut Trade': {
     title: 'Why do you want to cut?',
@@ -1679,14 +1862,53 @@ const MGMT_PROMPTS = {
       'Tightening the stop is always an option instead of cutting',
       'Don’t be scared of a loss — you know what you’re risking, no room for emotion here'
     ],
-    placeholder: 'e.g. Lost the printed 1h low after retest from the other side'
+    fields: [['price','Exit price','e.g. 19,580']],
+    yn: [],
+    choices: [],
+    placeholder: 'Why are you cutting — optional detail...'
   }
 };
+const MGMT_LABELS = { price:'Level / price', size:'Size', keyLevel:'Key level', oldStop:'Old stop', newStop:'New stop', levelBroken:'Level broken', moveType:'Move', speed:'Price move', reasons:'Reasons' };
+const MGMT_VERDICTS = [{v:'good',label:'Good decision'},{v:'ok',label:'Neutral'},{v:'poor',label:'Not the best decision'}];
+
+function mgmtDetailPairs(e){
+  const out = [];
+  const d = e.data || {};
+  Object.keys(MGMT_LABELS).forEach(k=>{
+    let v = d[k];
+    if(Array.isArray(v)) v = v.join(', ');
+    if(v==='yes') v='Yes'; if(v==='no') v='No';
+    if(v!==undefined && v!==null && String(v).trim()!=='') out.push([MGMT_LABELS[k], String(v)]);
+  });
+  return out;
+}
+/* one-line text version — used by the Excel export */
+function mgmtSummary(e){
+  const bits = mgmtDetailPairs(e).map(([k,v])=>k+': '+v);
+  if(e.note) bits.push('Note: '+e.note);
+  if(e.eval && e.eval.verdict) bits.push('Rated: '+({good:'good decision',ok:'neutral',poor:'not the best decision'}[e.eval.verdict]||e.eval.verdict)+(e.eval.note?' ('+e.eval.note+')':''));
+  return e.kind+' — '+bits.join(' | ');
+}
+function mgmtEntryEl(e){
+  const item = document.createElement('div'); item.className='log-item';
+  const d = new Date(e.ts);
+  const when = d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+  let html = `<div class="log-top"><span class="log-kind">${escapeHtml(e.kind)}</span><span>${when}</span></div>`;
+  mgmtDetailPairs(e).forEach(([k,v])=>{ html += `<div class="log-detail"><b>${escapeHtml(k)}</b>${escapeHtml(v)}</div>`; });
+  if(e.note) html += `<div class="log-note" style="margin-top:6px;">${escapeHtml(e.note)}</div>`;
+  item.innerHTML = html;
+  return item;
+}
 
 function openMgmtPrompt(t, kind){
   const holder = document.getElementById('mgmtPromptHolder');
   holder.innerHTML = '';
-  const cfg = MGMT_PROMPTS[kind];
+  const cfg = MGMT_FORMS[kind];
+  const draft = {}; const reasons = [];
+  if(kind==='Adjust Stop'){
+    const prev = [...t.mgmtLog].reverse().find(x=>x.kind==='Adjust Stop' && x.data && x.data.newStop);
+    draft.oldStop = prev ? prev.data.newStop : (t.plan.stop||'');
+  }
   const box = document.createElement('div'); box.style.cssText='margin-top:14px;padding-top:14px;border-top:1px solid var(--line-soft);';
   const q = document.createElement('div'); q.className='qtext'; q.style.marginBottom='0'; q.textContent = cfg.title;
   box.appendChild(q);
@@ -1695,13 +1917,52 @@ function openMgmtPrompt(t, kind){
     cfg.facts.forEach(f=>{ const li=document.createElement('li'); li.textContent=f; ul.appendChild(li); });
     box.appendChild(ul);
   }
-  const inp = document.createElement('input'); inp.type='text'; inp.placeholder=cfg.placeholder; inp.style.marginTop='11px';
+  const grid = document.createElement('div'); grid.className='field-row'; grid.style.marginTop='12px';
+  cfg.fields.forEach(([key,label,ph])=>{
+    const f = document.createElement('div'); f.className='field';
+    f.innerHTML = `<label>${label}</label>`;
+    const i = document.createElement('input'); i.type='text'; i.placeholder=ph; i.value=draft[key]||'';
+    i.addEventListener('input', ()=>{ draft[key]=i.value; });
+    f.appendChild(i); grid.appendChild(f);
+  });
+  box.appendChild(grid);
+  const pickRow = (label, opts, key, multi)=>{
+    const g = document.createElement('div'); g.style.marginTop='12px';
+    g.appendChild(Object.assign(document.createElement('div'),{className:'sub-label',textContent:label}));
+    const row = document.createElement('div'); row.className='opt-row';
+    opts.forEach(o=>{
+      const v = o.v!==undefined ? o.v : o, lb = o.label||o;
+      const chip = document.createElement('div'); chip.className='opt'; chip.textContent=lb;
+      chip.addEventListener('click', ()=>{
+        if(multi){
+          const i = reasons.indexOf(v); if(i>-1) reasons.splice(i,1); else reasons.push(v);
+          chip.classList.toggle('selected');
+        }else{
+          draft[key] = (draft[key]===v ? '' : v);
+          [...row.children].forEach(c=>c.classList.remove('selected'));
+          if(draft[key]) chip.classList.add('selected');
+        }
+      });
+      row.appendChild(chip);
+    });
+    g.appendChild(row); box.appendChild(g);
+  };
+  cfg.yn.forEach(([key,label])=> pickRow(label, [{v:'yes',label:'Yes'},{v:'no',label:'No'}], key, false));
+  cfg.choices.forEach(([key,label,opts])=> pickRow(label, opts, key, false));
+  pickRow('Reason (pick any)', MGMT_REASONS[kind], null, true);
+  const inp = document.createElement('input'); inp.type='text'; inp.placeholder=cfg.placeholder; inp.style.marginTop='12px';
   box.appendChild(inp);
   const row = document.createElement('div'); row.className='actions'; row.style.marginTop='10px';
   const save = document.createElement('button'); save.className='btn primary'; save.textContent='Log it';
   save.addEventListener('click', ()=>{
-    if(!inp.value.trim()) return;
-    t.mgmtLog.push({ ts:Date.now(), kind, note:inp.value.trim() });
+    const data = {};
+    Object.keys(draft).forEach(k=>{ if(String(draft[k]||'').trim()) data[k]=String(draft[k]).trim(); });
+    if(reasons.length) data.reasons = [...reasons];
+    const note = inp.value.trim();
+    /* oldStop alone is just the prefill — need at least one thing you actually entered */
+    const meaningful = Object.keys(data).filter(k=>k!=='oldStop').length>0 || note;
+    if(!meaningful) return;
+    t.mgmtLog.push({ ts:Date.now(), kind, note, data, eval:null });
     persist(); renderJourney();
   });
   row.appendChild(save);
@@ -1848,10 +2109,35 @@ function renderJournalStage(t){
 
   if(t.mgmtLog.length>0){
     const mgmtRecap = document.createElement('div'); panelHead(mgmtRecap, 'Management Log');
+    const hint = document.createElement('div'); hint.className='panel-sub'; hint.style.marginBottom='6px';
+    hint.textContent = 'Rate each decision — the ratings feed the Stats and the Journal filter.';
+    mgmtRecap.appendChild(hint);
     t.mgmtLog.forEach(e=>{
-      const item = document.createElement('div'); item.className='log-item';
-      const dd = new Date(e.ts);
-      item.innerHTML = `<div class="log-top"><span class="log-kind">${escapeHtml(e.kind)}</span><span>${dd.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}</span></div><div class="log-note">${escapeHtml(e.note)}</div>`;
+      const item = mgmtEntryEl(e);
+      const box = document.createElement('div'); box.className='eval-box';
+      box.appendChild(Object.assign(document.createElement('div'),{className:'sub-label',textContent:'Further evaluation'}));
+      const vRow = document.createElement('div'); vRow.className='opt-row';
+      MGMT_VERDICTS.forEach(o=>{
+        const chip = document.createElement('div');
+        const sel = e.eval && e.eval.verdict===o.v;
+        chip.className = 'opt' + (sel ? ' selected'+(o.v==='poor'?' neg':'') : '');
+        chip.textContent = o.label;
+        chip.addEventListener('click', ()=>{
+          if(!e.eval) e.eval = { verdict:null, note:'' };
+          e.eval.verdict = (e.eval.verdict===o.v ? null : o.v);
+          persist(); renderJourney();
+        });
+        vRow.appendChild(chip);
+      });
+      box.appendChild(vRow);
+      const en = document.createElement('input'); en.type='text'; en.style.marginTop='10px';
+      en.placeholder = e.kind==='Add' ? 'Was adding right here? Size OK? What would you change?'
+                     : e.kind==='Adjust Stop' ? 'Too early / too late? Right level?'
+                     : 'Was cutting right — or should you have held / tightened?';
+      en.value = (e.eval && e.eval.note) || '';
+      en.addEventListener('input', ()=>{ if(!e.eval) e.eval={verdict:null,note:''}; e.eval.note = en.value; persist(); });
+      box.appendChild(en);
+      item.appendChild(box);
       mgmtRecap.appendChild(item);
     });
     outer.appendChild(mgmtRecap);
@@ -1949,6 +2235,8 @@ let reviewFilterMgmt = 'all';
 /* One of these at a time — set by clicking through from a Stats table/tile.
    { type: 'setup'|'combo'|'direction'|'location', value: string } or null. */
 let reviewFilterExtra = null;
+/* 'all' | 'good' | 'ok' | 'poor' | 'unrated' — rating of the management decisions (within the chosen action kind, if one is picked). */
+let reviewFilterEval = 'all';
 
 function journaledTrades(){
   return trades.filter(t=> t.stage==='closed' && t.journal && t.journal.logged);
@@ -1962,7 +2250,12 @@ function journaledTrades(){
 function openReviewFiltered(type, value){
   reviewFilterOutcome = 'all';
   reviewFilterMgmt = 'all';
-  if(type==='asset'){
+  reviewFilterEval = 'all';
+  if(type==='mgmt'){
+    reviewFilterAsset = 'all';
+    reviewFilterExtra = null;
+    reviewFilterMgmt = value;
+  }else if(type==='asset'){
     reviewFilterAsset = value;
     reviewFilterExtra = null;
   }else{
@@ -1993,6 +2286,11 @@ function renderReview(){
     if(reviewFilterAsset!=='all' && t.asset!==reviewFilterAsset) return false;
     if(reviewFilterOutcome!=='all' && outcomeOf(t)!==reviewFilterOutcome) return false;
     if(reviewFilterMgmt!=='all' && !t.mgmtLog.some(e=>e.kind===reviewFilterMgmt)) return false;
+    if(reviewFilterEval!=='all'){
+      const pool = t.mgmtLog.filter(e=> reviewFilterMgmt==='all' || e.kind===reviewFilterMgmt);
+      const verdictOf = e=> (e.eval && e.eval.verdict) || 'unrated';
+      if(!pool.some(e=> verdictOf(e)===reviewFilterEval)) return false;
+    }
     if(!matchesReviewExtra(t)) return false;
     return true;
   });
@@ -2057,6 +2355,17 @@ function renderReview(){
   `;
   mgmtSel.addEventListener('change', ()=>{ reviewFilterMgmt = mgmtSel.value; renderReview(); });
   filterRow.appendChild(mgmtSel);
+
+  const evalSel = document.createElement('select');
+  evalSel.innerHTML = `
+    <option value="all" ${reviewFilterEval==='all'?'selected':''}>Any decision rating</option>
+    <option value="good" ${reviewFilterEval==='good'?'selected':''}>Good decision</option>
+    <option value="ok" ${reviewFilterEval==='ok'?'selected':''}>Neutral</option>
+    <option value="poor" ${reviewFilterEval==='poor'?'selected':''}>Not the best decision</option>
+    <option value="unrated" ${reviewFilterEval==='unrated'?'selected':''}>Not rated yet</option>
+  `;
+  evalSel.addEventListener('change', ()=>{ reviewFilterEval = evalSel.value; renderReview(); });
+  filterRow.appendChild(evalSel);
 
   const exportBtn = document.createElement('button');
   exportBtn.className = 'export-btn';
@@ -2129,6 +2438,7 @@ function exportJournalToExcel(rows){
     'Fees': t.closeData.fees || '',
     'Net PNL': t.closeData.netPnl || '',
     'Mgmt Actions': t.mgmtLog.length,
+    'Mgmt Detail': t.mgmtLog.map(mgmtSummary).join('  ||  '),
     'Evaluation': t.journal.evalNote || ''
   }));
   const ws = XLSX.utils.json_to_sheet(data);
@@ -2668,6 +2978,47 @@ function renderStats(){
   container.appendChild(buildStatTable('By Asset', byAsset, 'Asset', Infinity, 'asset'));
   container.appendChild(buildStatTable('By Direction', byDir, 'Direction', Infinity, 'direction'));
   if(byLocation.length) container.appendChild(buildStatTable('By Location', byLocation, 'Location', Infinity, 'location'));
+  const mgmtPanel = buildMgmtStatTable(rows);
+  if(mgmtPanel) container.appendChild(mgmtPanel);
+}
+
+/* How your in-trade decisions (add / stop moves / cuts) actually worked out:
+   how often, what the trades returned, and how you rated them yourself. */
+function buildMgmtStatTable(rows){
+  const kinds = ['Add','Adjust Stop','Cut Trade'];
+  const stat = {};
+  kinds.forEach(k=> stat[k] = { uses:0, trades:0, totalR:0, rN:0, good:0, ok:0, poor:0, unrated:0 });
+  rows.forEach(t=>{
+    const r = parseFloat((t.closeData.rMultiple||'').replace(',','.'));
+    kinds.forEach(k=>{
+      const es = t.mgmtLog.filter(e=>e.kind===k);
+      if(!es.length) return;
+      const g = stat[k];
+      g.uses += es.length; g.trades++;
+      if(!isNaN(r)){ g.totalR += r; g.rN++; }
+      es.forEach(e=>{ const v=(e.eval&&e.eval.verdict)||'unrated'; g[v]++; });
+    });
+  });
+  if(!kinds.some(k=>stat[k].uses>0)) return null;
+  const wrap = document.createElement('div'); wrap.className='panel'; wrap.style.marginTop='14px';
+  wrap.innerHTML = '<div class="panel-label">Management Decisions <span class="sub-hint">click a row to see those trades in the Journal</span></div>';
+  const tw = document.createElement('div'); tw.className='table-wrap';
+  const table = document.createElement('table'); table.className='rv-table';
+  table.innerHTML = `<thead><tr><th>Decision</th><th style="text-align:right;">Times</th><th style="text-align:right;">Trades</th><th style="text-align:right;">Avg R of those trades</th><th style="text-align:right;">Good</th><th style="text-align:right;">Neutral</th><th style="text-align:right;">Not the best</th><th style="text-align:right;">Not rated</th></tr></thead>`;
+  const tb = document.createElement('tbody');
+  kinds.forEach(k=>{
+    const g = stat[k]; if(!g.uses) return;
+    const avg = g.rN ? g.totalR/g.rN : null;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${({'Add':'Added to','Adjust Stop':'Stop adjusted','Cut Trade':'Cut'})[k]}</td>
+      <td style="text-align:right;">${g.uses}</td><td style="text-align:right;">${g.trades}</td>
+      <td class="rv-r ${avg!=null&&avg<0?'neg':'pos'}" style="text-align:right;">${avg==null?'—':(avg>=0?'+':'')+avg.toFixed(2)+'R'}</td>
+      <td style="text-align:right;">${g.good}</td><td style="text-align:right;">${g.ok}</td><td style="text-align:right;">${g.poor}</td><td style="text-align:right;">${g.unrated}</td>`;
+    tr.addEventListener('click', ()=> openReviewFiltered('mgmt', k));
+    tb.appendChild(tr);
+  });
+  table.appendChild(tb); tw.appendChild(table); wrap.appendChild(tw);
+  return wrap;
 }
 
 renderDashboard();
