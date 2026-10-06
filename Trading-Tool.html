@@ -1215,15 +1215,18 @@ function backToDashboard(){
 function closeJourney(){
   openTradeId = null;
   document.getElementById('journeyView').classList.remove('active');
-  if(returnTo==='review'){ openReview(); return; }
-  if(returnTo==='stats'){ openStats(); return; }
+  if(returnTo==='review'){ openReview(true); return; }
+  if(returnTo==='stats'){ openStats(true); return; }
   backToDashboard();
 }
 
 /* ---------------------------------------------------------------------
    Journey shell: stepper + routing to the right stage renderer
 --------------------------------------------------------------------- */
+let savedScrollY = 0;
 function openJourney(id, from){
+  /* remember where you were in the Journal / Stats list so "back" returns there, not to the top */
+  if(from==='review' || from==='stats') savedScrollY = window.scrollY || 0;
   openTradeId = id;
   returnTo = from || 'dashboard';
   const t = trades.find(x=>x.id===id);
@@ -1236,22 +1239,22 @@ function openJourney(id, from){
   window.scrollTo(0,0);
 }
 
-function openReview(){
+function openReview(restoreScroll){
   document.getElementById('dashboardView').style.display = 'none';
   document.getElementById('journeyView').classList.remove('active');
   document.getElementById('statsView').classList.remove('active');
   document.getElementById('reviewView').classList.add('active');
   renderReview();
-  window.scrollTo(0,0);
+  window.scrollTo(0, restoreScroll===true ? savedScrollY : 0);
 }
 
-function openStats(){
+function openStats(restoreScroll){
   document.getElementById('dashboardView').style.display = 'none';
   document.getElementById('journeyView').classList.remove('active');
   document.getElementById('reviewView').classList.remove('active');
   document.getElementById('statsView').classList.add('active');
   renderStats();
-  window.scrollTo(0,0);
+  window.scrollTo(0, restoreScroll===true ? savedScrollY : 0);
 }
 
 function currentTrade(){ return trades.find(t=>t.id===openTradeId); }
@@ -2996,6 +2999,59 @@ function buildMonthlyRChart(rows){
   return wrap;
 }
 
+function stopPctValue(t){
+  const raw = String((t.closeData && t.closeData.stopUsedPct) || '').trim();
+  if(!raw) return NaN;
+  let n = parseFloat(raw.replace('%','').replace(',','.'));
+  if(isNaN(n)) return NaN;
+  return n;
+}
+function fmtPct(n){ return n.toFixed(2) + '%'; }
+
+/* Details behind the "% of stop used" tile: average / highest / lowest, winners vs
+   losers, and a per-asset breakdown. */
+function buildStopDetail(items){
+  const wrap = document.createElement('div'); wrap.className='panel'; wrap.style.marginTop='10px';
+  wrap.innerHTML = '<div class="panel-label">% of Stop Used — details</div>';
+  if(!items.length){
+    wrap.appendChild(Object.assign(document.createElement('div'),{style:'color:var(--ink-faint);font-size:12.5px;',textContent:'No trades with “% of stop used” filled in yet (it’s a field in the Journal stage of each trade).'}));
+    return wrap;
+  }
+  const stats = arr=>{
+    if(!arr.length) return null;
+    const vals = arr.map(x=>x.v);
+    const hi = arr.reduce((m,x)=>x.v>m.v?x:m, arr[0]);
+    const lo = arr.reduce((m,x)=>x.v<m.v?x:m, arr[0]);
+    return { n:arr.length, avg: vals.reduce((a,b)=>a+b,0)/vals.length, hi, lo };
+  };
+  const all = stats(items);
+  const dt = x=> escapeHtml(x.t.asset)+' '+escapeHtml(fmtDateTime(x.t.closeData.closedAtMs)||'');
+  const tiles = document.createElement('div'); tiles.className='stat-row';
+  tiles.innerHTML = `
+    <div class="stat-tile"><div class="k">Average</div><div class="v">${fmtPct(all.avg)}</div><div class="sub-hint">${all.n} trades</div></div>
+    <div class="stat-tile"><div class="k">Highest</div><div class="v">${fmtPct(all.hi.v)}</div><div class="sub-hint">${dt(all.hi)}</div></div>
+    <div class="stat-tile"><div class="k">Lowest</div><div class="v">${fmtPct(all.lo.v)}</div><div class="sub-hint">${dt(all.lo)}</div></div>`;
+  wrap.appendChild(tiles);
+
+  const mk = (title, groups)=>{
+    const tw = document.createElement('div'); tw.className='table-wrap'; tw.style.marginTop='14px';
+    const table = document.createElement('table'); table.className='rv-table';
+    table.innerHTML = `<thead><tr><th>${title}</th><th style="text-align:right;">Trades</th><th style="text-align:right;">Avg</th><th style="text-align:right;">Highest</th><th style="text-align:right;">Lowest</th></tr></thead>`;
+    const tb = document.createElement('tbody');
+    groups.forEach(([label, arr])=>{
+      const st = stats(arr); if(!st) return;
+      const tr = document.createElement('tr'); tr.style.cursor='default';
+      tr.innerHTML = `<td>${escapeHtml(label)}</td><td style="text-align:right;">${st.n}</td><td style="text-align:right;">${fmtPct(st.avg)}</td><td style="text-align:right;">${fmtPct(st.hi.v)}</td><td style="text-align:right;">${fmtPct(st.lo.v)}</td>`;
+      tb.appendChild(tr);
+    });
+    table.appendChild(tb); tw.appendChild(table); return tw;
+  };
+  wrap.appendChild(mk('Outcome', [['Winners', items.filter(x=>x.outcome==='win')], ['Losers', items.filter(x=>x.outcome==='loss')], ['Breakeven', items.filter(x=>x.outcome==='be')]]));
+  const assets = [...new Set(items.map(x=>x.t.asset))].sort();
+  wrap.appendChild(mk('Asset', assets.map(a=>[a, items.filter(x=>x.t.asset===a)])));
+  return wrap;
+}
+
 /* Stats period: all time, or one day / week (Mon–Sun) / month, with ◀ ▶ to step
    back to earlier periods. Filters by the trade's close time. */
 let statsPeriod = 'all';
@@ -3094,12 +3150,12 @@ function renderStats(){
     if(isWin) winStreak = Math.max(winStreak, curStreak); else lossStreak = Math.max(lossStreak, curStreak);
   });
 
-  /* % of stop used only means something on a winner — how much it drew down
-     against you before turning into profit. On a loser the stop was simply
-     hit (or the trade was cut), so that number doesn't carry a signal. */
-  const stopPctOf = x => parseFloat(String(x.t.closeData.stopUsedPct||'').replace('%','').replace(',','.'));
+  /* % of stop used — "40%", "40" and "0,11" are all read as percent values (0,11 = 0.11%). */
+  const stopPctOf = x => stopPctValue(x.t);
   const stopUsedWin = wins.map(stopPctOf).filter(n=>!isNaN(n));
   const avgStopWin = stopUsedWin.length ? stopUsedWin.reduce((a,b)=>a+b,0)/stopUsedWin.length : null;
+  const stopAll = rVals.map(x=>({ t:x.t, v:stopPctValue(x.t), outcome:x.outcome })).filter(x=>!isNaN(x.v));
+  const avgStopAll = stopAll.length ? stopAll.reduce((a,x)=>a+x.v,0)/stopAll.length : null;
 
   const feesVals = rows.map(t=>parseFloat(String(t.closeData.fees||'').replace(',','.'))).filter(n=>!isNaN(n));
   const avgFees = feesVals.length ? feesVals.reduce((a,b)=>a+b,0)/feesVals.length : null;
@@ -3142,9 +3198,14 @@ function renderStats(){
 
   const row4 = document.createElement('div'); row4.className='stat-row'; row4.style.marginTop='10px';
   row4.innerHTML = `
-    <div class="stat-tile"><div class="k">Avg Drawdown on Winners (% Stop Used)</div><div class="v">${avgStopWin!=null ? avgStopWin.toFixed(0)+'%' : '—'}</div></div>
+    <div class="stat-tile clickable" id="stopTile"><div class="k">Avg % of Stop Used <span class="sub-hint">click for details</span></div><div class="v">${avgStopAll!=null ? fmtPct(avgStopAll) : '—'}</div></div>
+    <div class="stat-tile"><div class="k">Avg % Stop Used (Winners)</div><div class="v">${avgStopWin!=null ? fmtPct(avgStopWin) : '—'}</div></div>
   `;
   container.appendChild(row4);
+  const stopDetail = buildStopDetail(stopAll);
+  stopDetail.style.display = 'none';
+  container.appendChild(stopDetail);
+  row4.querySelector('#stopTile').addEventListener('click', ()=>{ stopDetail.style.display = stopDetail.style.display==='none' ? 'block' : 'none'; });
 
   /* Biggest single winner/loser by R — clickable straight into that trade's journal entry */
   function tradeTile(label, entry){
