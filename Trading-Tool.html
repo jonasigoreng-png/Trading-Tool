@@ -1338,7 +1338,7 @@ function renderCheckStage(t){
         if(!c.preemptTags) c.preemptTags = [];
         const pg = document.createElement('div'); pg.style.marginTop='14px';
         pg.appendChild(Object.assign(document.createElement('div'),{className:'sub-label',textContent:'What are you pre-empting?'}));
-        multiChipRow(pg, ['Weekly bias','Daily bias','Weekly candle close','Daily candle close','Weekly level','Daily level'], c.preemptTags, val=>{
+        multiChipRow(pg, (PATTERNS_BY_DIR[t.dir] || []), c.preemptTags, val=>{
           const i = c.preemptTags.indexOf(val);
           if(i>-1) c.preemptTags.splice(i,1); else c.preemptTags.push(val);
           persist();
