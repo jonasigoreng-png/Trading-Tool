@@ -243,6 +243,17 @@ input[type=text], textarea, select{
   color:var(--ink); font-family:var(--sans); font-size:13px; padding:9px 10px; resize:vertical;
 }
 input[type=text]:focus, textarea:focus, select:focus{ outline:none; border-color:#4a5262; }
+input[type=email], input[type=password], input[type=datetime-local]{
+  width:100%; background:var(--panel-raised); border:1px solid var(--line); border-radius:4px;
+  color:var(--ink); font-family:var(--sans); font-size:13px; padding:9px 10px;
+}
+/* phones: no double-tap zoom on chips/buttons, and 16px inputs so iOS Safari doesn't zoom the whole page on focus */
+html{ -webkit-text-size-adjust:100%; }
+.opt, .btn, .mgmt-action-btn, .step, .stat-tile, button{ touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+@media (max-width:700px){
+  input[type=text], input[type=email], input[type=password], input[type=datetime-local], textarea, select{ font-size:16px; }
+  .opt{ padding:10px 13px; }
+}
 .field-row{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
 @media (max-width:480px){ .field-row{ grid-template-columns:1fr; } }
 .field{ margin-bottom:12px; }
@@ -806,8 +817,13 @@ function dedupeImportedTrades(){
 const savedSnap = new Map();   /* id -> content key last confirmed in the cloud */
 const stampedKey = new Map();  /* id -> content key last stamped + backed up locally */
 function tradeKey(t){
-  const c = Object.assign({}, t); delete c.updatedAt;
-  return JSON.stringify(c);
+  /* screenshots are big base64 strings — for change detection their length is enough,
+     serializing all of them on every save made phones crawl */
+  return JSON.stringify(t, function(k, v){
+    if(k==='updatedAt' && this===t) return undefined;
+    if(k==='shots' && Array.isArray(v)) return v.map(x=> typeof x==='string' ? 'img:'+x.length+':'+x.slice(-24) : x);
+    return v;
+  });
 }
 
 function mergeLocalBackups(){
@@ -824,8 +840,11 @@ function mergeLocalBackups(){
       if(lk.startsWith('tjbak:')){
         if(!remote){
           /* exists only locally = never reached the cloud (e.g. created while a write failed) */
+          delete loc._noShots;
           trades.push(loc); byId.set(loc.id, loc); changed++;
         }else if((loc.updatedAt||0) > (remote.updatedAt||0)){
+          if(loc._noShots){ loc.journal = loc.journal || {}; loc.journal.shots = (remote.journal && remote.journal.shots) || []; }
+          delete loc._noShots;
           const idx = trades.indexOf(remote); trades[idx] = loc; byId.set(loc.id, loc);
           stampedKey.set(loc.id, tradeKey(loc)); changed++;
         }
@@ -860,7 +879,12 @@ function stampAndBackup(){
     if(stampedKey.get(t.id)!==k){
       t.updatedAt = Date.now();
       stampedKey.set(t.id,k);
-      try{ localStorage.setItem('tjbak:'+t.id, JSON.stringify(t)); }catch(e){ /* storage full — cloud copy still gets written */ }
+      /* local backup is text-only: screenshots are multi-MB and would make every save slow
+         (and overflow the phone's small localStorage quota) — they live in the cloud copy */
+      try{
+        const lite = Object.assign({}, t, { journal: Object.assign({}, t.journal, { shots: [] }), _noShots: true });
+        localStorage.setItem('tjbak:'+t.id, JSON.stringify(lite));
+      }catch(e){ /* storage full — cloud copy still gets written */ }
     }
   });
 }
@@ -1316,6 +1340,11 @@ function currentTrade(){ return trades.find(t=>t.id===openTradeId); }
 function stageIndex(stage){ return STAGES.indexOf(stage); }
 
 function renderJourney(){
+  /* every chip tap rebuilds the whole stage; without this the page jumps back up on phones */
+  const keepY = window.scrollY || 0;
+  try{ renderJourneyInner(); } finally { if(keepY) window.scrollTo(0, keepY); }
+}
+function renderJourneyInner(){
   const t = currentTrade();
   document.getElementById('jAsset').textContent = t.asset + ' · ' + (t.dir==='long'?'Long':'Short');
   document.getElementById('jSetup').textContent = patternsOf(t).join(', ') || '—';
