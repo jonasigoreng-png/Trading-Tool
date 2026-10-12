@@ -1386,6 +1386,13 @@ function renderCheckStage(t){
      No bias → only an H1 level matters: patterns/location/candle shape drop out
      and you go straight to grading the level. Not chosen yet (fresh trade) →
      only the Asset / Direction / Bias panel until you pick. */
+  /* Inside Week Failure is a weekly-chart setup — not offered with a Daily bias */
+  const patOptions = (PATTERNS_BY_DIR[t.dir] || []).filter(p=> !(t.bias==='daily' && p==='Inside Week Failure'));
+  if(t.bias==='daily' && Array.isArray(t.patterns) && t.patterns.includes('Inside Week Failure')){
+    const kept = t.patterns.filter(p=>p!=='Inside Week Failure');
+    t.patterns = kept.length ? kept : [patOptions[0]];
+    persist();
+  }
   const noBias = t.bias==='none';
   const unsetBias = !t.bias && stageIndex(t.stage)===0;
 
@@ -1535,7 +1542,7 @@ function renderCheckStage(t){
         if(!c.preemptTags) c.preemptTags = [];
         const pg = document.createElement('div'); pg.style.marginTop='14px';
         pg.appendChild(Object.assign(document.createElement('div'),{className:'sub-label',textContent:'What are you pre-empting?'}));
-        multiChipRow(pg, (PATTERNS_BY_DIR[t.dir] || []), c.preemptTags, val=>{
+        multiChipRow(pg, patOptions, c.preemptTags, val=>{
           const i = c.preemptTags.indexOf(val);
           if(i>-1) c.preemptTags.splice(i,1); else c.preemptTags.push(val);
           persist();
@@ -1753,6 +1760,22 @@ function renderCheckStage(t){
     setTimeout(()=>{ closeJourney(); }, 450);
   });
   actions.appendChild(saveCheckBtn);
+  const resetBtn = document.createElement('button');
+  resetBtn.className = 'btn';
+  resetBtn.textContent = 'Reset checklist';
+  resetBtn.style.cssText = 'color:var(--nogo);';
+  resetBtn.addEventListener('click', ()=>{
+    if(!confirm('Reset the checklist? This clears bias, setup, location, level grading and all other answers for this trade (asset and direction stay).')) return;
+    if(t.plan && t.plan.entry && t.plan.entry===c.entryLevel) t.plan.entry = '';   /* entry that was synced from the check */
+    t.check = { where:'', whereTags:[], whereExtra:'', confluence:'none', confluenceTags:[], valid:null, extreme:null, candleOk:null, candleNote:'', levelRating:null, levelNote:'',
+                context:null, contextNote:'', trouble:'', biasOk:null, entryLevel:'', mindset:null, mindsetNote:'' };
+    t.bias = null;
+    t.patterns = [PATTERNS_BY_DIR[t.dir][0]];
+    delete t.failedPatternType;
+    checkSecOpen = {};
+    persist(); renderJourney();
+  });
+  actions.appendChild(resetBtn);
   const planBtn = document.createElement('button');
   planBtn.className = 'btn primary';
   planBtn.textContent = 'Make the Plan →';
@@ -1807,7 +1830,7 @@ function renderCheckStage(t){
 
   const patGroup = noBias ? document.createElement('div') : subGroup(headPanel, 'Setup / Pattern', true);
   const patRow = document.createElement('div');
-  multiChipRow(patRow, PATTERNS_BY_DIR[t.dir], t.patterns, v=>{
+  multiChipRow(patRow, patOptions, t.patterns, v=>{
     const i = t.patterns.indexOf(v);
     if(i>-1){ if(t.patterns.length>1) t.patterns.splice(i,1); } else { t.patterns.push(v); }
     persist();
