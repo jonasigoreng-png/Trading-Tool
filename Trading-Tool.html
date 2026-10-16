@@ -2290,6 +2290,16 @@ function renderJournalStage(t){
   outcomeField.appendChild(outcomeRow);
   exitPanel.appendChild(outcomeField);
 
+  /* Only for losers: how far in profit the trade got before it turned (in R) */
+  if(d.outcome==='loss'){
+    const urField = document.createElement('div'); urField.className='field'; urField.style.marginTop='4px';
+    urField.innerHTML = '<label>Unrealized gain in R</label>';
+    const urInp = document.createElement('input'); urInp.type='text'; urInp.value=d.unrealizedR||''; urInp.placeholder='e.g. 1.5 (how far it was in profit before the loss)';
+    urInp.addEventListener('input', ()=>{ d.unrealizedR=urInp.value; persist(); });
+    urField.appendChild(urInp);
+    exitPanel.appendChild(urField);
+  }
+
   const grid2 = document.createElement('div'); grid2.className='field-row'; grid2.style.marginTop='4px';
   const rRow = document.createElement('div'); rRow.className='field';
   rRow.innerHTML = `<label>R multiple</label>`;
@@ -2731,6 +2741,7 @@ function exportJournalToExcel(rows){
     'Size': t.closeData.size || '',
     'R Multiple': t.closeData.rMultiple || '',
     'Outcome': t.closeData.outcome ? ({win:'Win',loss:'Loss',be:'BE'}[t.closeData.outcome] || t.closeData.outcome) : '',
+    'Unrealized gain (R)': t.closeData.unrealizedR || '',
     '% Stop Used': t.closeData.stopUsedPct || '',
     'PNL': t.closeData.pnl || '',
     'Fees': t.closeData.fees || '',
