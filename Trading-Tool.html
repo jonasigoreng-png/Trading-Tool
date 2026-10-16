@@ -3347,14 +3347,38 @@ function renderStats(){
       <div style="font-family:var(--mono);font-size:11px;color:var(--ink-faint);margin-top:5px;">${escapeHtml(tt.asset)} · ${escapeHtml(patternsOf(tt).join(', ')||'—')}${dateStr?' · '+escapeHtml(dateStr):''}</div>
     </div>`;
   }
-  const bestTrade = rVals.length ? [...rVals].sort((a,b)=>b.r-a.r)[0] : null;
-  const worstTrade = rVals.length ? [...rVals].sort((a,b)=>a.r-b.r)[0] : null;
+  /* a "winner" must actually be in profit and a "loser" actually in loss — otherwise show a dash */
+  const bestTrade = [...rVals].filter(x=>x.r>0).sort((a,b)=>b.r-a.r)[0] || null;
+  const worstTrade = [...rVals].filter(x=>x.r<0).sort((a,b)=>a.r-b.r)[0] || null;
   const row5 = document.createElement('div'); row5.className='stat-row'; row5.style.marginTop='10px';
   row5.innerHTML = tradeTile('Biggest Winner', bestTrade) + tradeTile('Biggest Loser', worstTrade);
   container.appendChild(row5);
   row5.querySelectorAll('[data-trade-id]').forEach(el=>{
     el.addEventListener('click', ()=> openJourney(el.dataset.tradeId, 'stats'));
   });
+
+  /* Period overview: every trade closed in the selected day / week / month */
+  if(rg){
+    const lp = document.createElement('div'); lp.className='panel'; lp.style.marginTop='14px';
+    lp.innerHTML = `<div class="panel-label">Trades in this period <span class="sub-hint">${escapeHtml(rg.label)} — click a row to open the trade</span></div>`;
+    const tbl = document.createElement('table'); tbl.className='rv-table'; tbl.style.marginTop='8px';
+    tbl.innerHTML = '<thead><tr><th>Closed</th><th>Asset</th><th>Dir</th><th>Setup</th><th>Result</th><th class="rv-r">R</th></tr></thead>';
+    const tb = document.createElement('tbody');
+    [...rows].sort((a,b)=>(a.closeData.closedAtMs||0)-(b.closeData.closedAtMs||0)).forEach(tt=>{
+      const oc = outcomeOf(tt);
+      const rn = parseFloat(String(tt.closeData.rMultiple||'').replace(',','.'));
+      const rTxt = isNaN(rn) ? '—' : (rn>0?'+':'')+rn.toFixed(2)+'R';
+      const pill = ({win:'<span class="pos">Win</span>',loss:'<span class="neg">Loss</span>',be:'<span>BE</span>'})[oc] || '—';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td class="nowrap">${escapeHtml(fmtDateTime(tt.closeData.closedAtMs)||'—')}</td><td>${escapeHtml(tt.asset||'')}</td><td>${tt.dir==='long'?'Long':'Short'}</td><td>${escapeHtml(patternsOf(tt).join(', ')||'—')}</td><td>${pill}</td><td class="rv-r ${rn>0?'pos':(rn<0?'neg':'')}">${rTxt}</td>`;
+      tr.addEventListener('click', ()=> openJourney(tt.id, 'stats'));
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    const sc = document.createElement('div'); sc.style.overflowX='auto'; sc.appendChild(tbl);
+    lp.appendChild(sc);
+    container.appendChild(lp);
+  }
 
   container.appendChild(buildEquityCurveChart(rows));
   container.appendChild(buildMonthlyRChart(rows));
