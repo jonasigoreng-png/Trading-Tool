@@ -2284,7 +2284,17 @@ function renderJournalStage(t){
     const chip = document.createElement('div');
     chip.className = 'opt' + (d.outcome===val ? ' selected '+cls : '');
     chip.textContent = label;
-    chip.addEventListener('click', ()=>{ d.outcome = (d.outcome===val ? null : val); persist(); renderJourney(); });
+    chip.addEventListener('click', ()=>{
+      d.outcome = (d.outcome===val ? null : val);
+      /* Loss → R multiple and PNL start with a minus sign (typing a plain number gets the minus added when you leave the field) */
+      ['rMultiple','pnl'].forEach(k=>{
+        let v = String(d[k]||'').trim();
+        if(d.outcome==='loss'){ if(!v) v='-'; else if(!/^[-−]/.test(v)) v='-'+v.replace(/^\+/,''); }
+        else if(v==='-') v='';
+        d[k]=v;
+      });
+      recalcNet(); persist(); renderJourney();
+    });
     outcomeRow.appendChild(chip);
   });
   outcomeField.appendChild(outcomeRow);
@@ -2305,6 +2315,7 @@ function renderJournalStage(t){
   rRow.innerHTML = `<label>R multiple</label>`;
   const rInp = document.createElement('input'); rInp.type='text'; rInp.value=d.rMultiple||''; rInp.placeholder='e.g. +1.2 or -1.0';
   rInp.addEventListener('input', ()=>{ d.rMultiple=rInp.value; persist(); renderDashboardQuiet(); });
+  rInp.addEventListener('blur', ()=>{ if(d.outcome==='loss' && /^\s*[0-9.,]/.test(rInp.value)){ rInp.value='-'+rInp.value.trim(); d.rMultiple=rInp.value; persist(); renderDashboardQuiet(); } });
   rRow.appendChild(rInp);
   grid2.appendChild(rRow);
   const stopRow = document.createElement('div'); stopRow.className='field';
@@ -2347,6 +2358,7 @@ function renderJournalStage(t){
   pnlRow.innerHTML = `<label>PNL</label>`;
   const pnlInp = document.createElement('input'); pnlInp.type='text'; pnlInp.value=d.pnl||''; pnlInp.placeholder='e.g. +340 or -120';
   pnlInp.addEventListener('input', ()=>{ d.pnl=pnlInp.value; recalcNet(); persist(); netOut.textContent = d.netPnl ? `${d.netPnl} ${t.journal.currency||''}`.trim() : '—'; netOut.style.color = (d.netPnl||'').startsWith('-') ? 'var(--nogo)' : (d.netPnl ? 'var(--go)' : 'var(--ink)'); });
+  pnlInp.addEventListener('blur', ()=>{ if(d.outcome==='loss' && /^\s*[0-9.,]/.test(pnlInp.value)){ pnlInp.value='-'+pnlInp.value.trim(); d.pnl=pnlInp.value; recalcNet(); persist(); netOut.textContent = d.netPnl ? `${d.netPnl} ${t.journal.currency||''}`.trim() : '—'; netOut.style.color = (d.netPnl||'').startsWith('-') ? 'var(--nogo)' : (d.netPnl ? 'var(--go)' : 'var(--ink)'); } });
   pnlRow.appendChild(pnlInp);
   grid4.appendChild(pnlRow);
   const feesRow = document.createElement('div'); feesRow.className='field';
