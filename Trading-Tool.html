@@ -51,7 +51,7 @@ body{
 }
 .wrap{ max-width:760px; margin:0 auto; padding:28px 16px 100px; }
 /* Journal + Stats have wide tables — give them more room so dates stay on one line */
-.wrap:has(#reviewView.active), .wrap:has(#statsView.active){ max-width:1180px; }
+.wrap:has(#reviewView.active), .wrap:has(#statsView.active), .wrap:has(#missedView.active){ max-width:1180px; }
 .rv-table td.nowrap{ white-space:nowrap; }
 
 h1,h2,h3{ font-family:var(--mono); letter-spacing:-0.01em; margin:0; }
@@ -373,6 +373,15 @@ html{ -webkit-text-size-adjust:100%; }
 .table-wrap{ overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
 .export-note{ font-size:11.5px; color:var(--ink-faint); margin-top:8px; }
 .stat-highlight{ font-family:var(--mono); font-size:12px; color:var(--ink-dim); margin-top:6px; }
+.me-card{ background:var(--panel); border:1px solid var(--line); border-radius:10px; margin-top:10px; overflow:hidden; }
+.me-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:13px 15px; cursor:pointer; flex-wrap:wrap; }
+.me-head:hover{ background:var(--panel-raised); }
+.me-title{ font-family:var(--mono); font-size:13.5px; font-weight:600; }
+.me-sub{ font-family:var(--mono); font-size:11.5px; color:var(--ink-faint); margin-top:3px; }
+.me-body{ padding:4px 15px 16px; border-top:1px solid var(--line-soft); }
+.me-body .sub-label{ margin:16px 0 8px; }
+.me-r{ font-family:var(--mono); font-weight:700; font-size:14px; }
+.me-r.pos{ color:var(--go); } .me-r.neg{ color:var(--nogo); }
 .filter-chip{
   display:inline-flex; align-items:center; gap:7px; background:var(--select-dim); border:1px solid var(--select);
   color:var(--ink); font-family:var(--mono); font-size:12px; padding:5px 6px 5px 11px; border-radius:16px;
@@ -387,7 +396,8 @@ html{ -webkit-text-size-adjust:100%; }
 
   <div class="topbar">
     <div class="brand"><div class="brand-mark"></div><div class="brand-name">TRADE JOURNEY</div></div>
-    <div style="display:flex; align-items:center; gap:10px;">
+    <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; justify-content:flex-end;">
+      <button class="nav-link" id="missedNavBtn">Missed Entries</button>
       <button class="nav-link" id="statsNavBtn">Stats</button>
       <button class="nav-link" id="reviewNavBtn">Review Journal</button>
     </div>
@@ -437,6 +447,16 @@ html{ -webkit-text-size-adjust:100%; }
     <div id="reviewContent"></div>
   </div>
 
+  <!-- ============ MISSED ENTRIES ============ -->
+  <div class="journey" id="missedView">
+    <div class="back-row"><button class="back-btn" id="missedBackBtn">← All trades</button></div>
+    <div class="journey-head">
+      <div class="journey-asset">Missed Entries</div>
+      <div class="journey-setup">Planned setups you didn’t take — saved separately from your Journal.</div>
+    </div>
+    <div id="missedContent"></div>
+  </div>
+
   <!-- ============ STATS ============ -->
   <div class="journey" id="statsView">
     <div class="back-row"><button class="back-btn" id="statsBackBtn">← All trades</button></div>
@@ -474,6 +494,21 @@ const firebaseConfig = {
 };
 
 let fbDb = null;
+let cloudLoadFailed = false;   /* set when a cloud read failed and the app fell back to local storage */
+
+/* Red bar at the top when loading goes wrong — instead of a silently empty or endlessly 'Loading…' page */
+function showLoadProblem(msg){
+  let el = document.getElementById('loadProblem');
+  if(!msg){ if(el) el.remove(); return; }
+  if(!el){
+    el = document.createElement('div'); el.id='loadProblem';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9998;background:#3a1a1e;color:#f2a3ab;border-bottom:1px solid #6b2a31;padding:10px 14px;font-size:12.5px;line-height:1.45;font-family:var(--mono);display:flex;gap:10px;align-items:center;justify-content:space-between;';
+    el.innerHTML = '<span id="loadProblemMsg"></span><button style="background:none;border:1px solid #6b2a31;color:#f2a3ab;border-radius:6px;padding:5px 10px;font-family:var(--mono);font-size:12px;cursor:pointer;flex-shrink:0;">Reload</button>';
+    el.querySelector('button').addEventListener('click', ()=> location.reload());
+    document.body.appendChild(el);
+  }
+  el.querySelector('#loadProblemMsg').textContent = msg;
+}
 let firebaseReady = Promise.resolve(false);
 
 /* ---------- Login ----------
@@ -527,6 +562,9 @@ if(typeof firebase !== 'undefined'){
   try{
     firebase.initializeApp(firebaseConfig);
     fbDb = firebase.firestore();
+    /* Phones on mobile data / some Wi-Fi proxies break Firestore's default streaming connection, so
+       reads hang forever. Long-polling works everywhere. */
+    try{ fbDb.settings({ experimentalForceLongPolling:true, merge:true }); }catch(e){ console.warn('Firestore settings:', e); }
     firebaseReady = new Promise(resolve=>{
       firebase.auth().onAuthStateChanged(user=>{
         if(user && !user.isAnonymous){ hideLogin(); showSignOut(); resolve(true); }
@@ -539,8 +577,14 @@ if(typeof firebase !== 'undefined'){
     });
   }catch(e){
     console.warn('Firebase Initialisierung fehlgeschlagen, nutze Fallback:', e);
+    showLoadProblem('Could not start the cloud connection ('+(e && (e.code||e.message) || 'error')+'). What you see may be incomplete.');
   }
+}else if(firebaseConfig.apiKey){
+  /* the Firebase scripts were blocked / didn't load (content blocker, flaky network) */
+  setTimeout(()=> showLoadProblem('The cloud library could not be loaded (network or content blocker?). Your data is NOT shown — reload, or turn off the blocker for this page.'), 0);
 }
+/* if loading takes suspiciously long, say so */
+setTimeout(()=>{ if(typeof tradesLoaded!=='undefined' && !tradesLoaded && !document.getElementById('loginOverlay')) showLoadProblem('Still loading… the connection seems slow. Your data is safe in the cloud — reload to try again.'); }, 15000);
 
 /* Screenshots are compressed in the browser and stored as base64 directly
    inside the trade's own document — no Firebase Storage / Blaze plan
@@ -611,7 +655,7 @@ async function storageList(prefix){
       const keys = [];
       snap.forEach(d=> keys.push(d.id));
       return { keys, prefix };
-    }catch(e){ console.warn('Firestore-Liste fehlgeschlagen, nutze Fallback:', e); }
+    }catch(e){ console.warn('Firestore-Liste fehlgeschlagen, nutze Fallback:', e); cloudLoadFailed = true; }
   }
   if(hasClaudeStorage()){
     return await window.storage.list(prefix);
@@ -630,7 +674,7 @@ async function storageGet(key){
       const docSnap = await fbDb.collection('kv').doc(key).get();
       if(docSnap.exists) return { key, value: docSnap.data().value, shared:false };
       return null;
-    }catch(e){ console.warn('Firestore-Lesevorgang fehlgeschlagen, nutze Fallback:', e); }
+    }catch(e){ console.warn('Firestore-Lesevorgang fehlgeschlagen, nutze Fallback:', e); cloudLoadFailed = true; }
   }
   if(hasClaudeStorage()){
     try{
@@ -748,6 +792,7 @@ async function loadTrades(){
   const deduped = dedupeImportedTrades();
   if(repaired>0 || merged>0) persist();
   tradesLoaded = true;
+  showLoadProblem(cloudLoadFailed ? 'The cloud could not be read completely — some trades may be missing. Reload to try again.' : null);
   renderDashboard();
 }
 
@@ -1285,6 +1330,7 @@ function backToDashboard(){
   document.getElementById('journeyView').classList.remove('active');
   document.getElementById('reviewView').classList.remove('active');
   document.getElementById('statsView').classList.remove('active');
+  document.getElementById('missedView').classList.remove('active');
   document.getElementById('dashboardView').style.display = 'block';
   renderDashboard();
   window.scrollTo(0,0);
@@ -1311,6 +1357,7 @@ function openJourney(id, from){
   openStage = t.stage;
   document.getElementById('dashboardView').style.display = 'none';
   document.getElementById('reviewView').classList.remove('active');
+  document.getElementById('missedView').classList.remove('active');
   document.getElementById('statsView').classList.remove('active');
   document.getElementById('journeyView').classList.add('active');
   renderJourney();
@@ -1321,6 +1368,7 @@ function openReview(restoreScroll){
   document.getElementById('dashboardView').style.display = 'none';
   document.getElementById('journeyView').classList.remove('active');
   document.getElementById('statsView').classList.remove('active');
+  document.getElementById('missedView').classList.remove('active');
   document.getElementById('reviewView').classList.add('active');
   renderReview();
   window.scrollTo(0, restoreScroll===true ? savedScrollY : 0);
@@ -1330,6 +1378,7 @@ function openStats(restoreScroll){
   document.getElementById('dashboardView').style.display = 'none';
   document.getElementById('journeyView').classList.remove('active');
   document.getElementById('reviewView').classList.remove('active');
+  document.getElementById('missedView').classList.remove('active');
   document.getElementById('statsView').classList.add('active');
   renderStats();
   window.scrollTo(0, restoreScroll===true ? savedScrollY : 0);
@@ -2006,6 +2055,18 @@ function renderPlanStage(t){
     openStage='active'; if(!t.activeAt) t.activeAt=Date.now(); persist(); renderJourney();
   });
   actions.appendChild(inTradeBtn);
+  const missBtn = document.createElement('button'); missBtn.className='btn'; missBtn.textContent='Missed Entry';
+  if(canMarkMissed(t)){
+    missBtn.addEventListener('click', ()=> markTradeMissed(t));
+  }else{
+    missBtn.disabled = true; missBtn.style.opacity = '.45'; missBtn.title = 'Fill in entry, stop and target first';
+  }
+  actions.appendChild(missBtn);
+  if(!canMarkMissed(t)){
+    outer.appendChild(actions);
+    outer.appendChild(Object.assign(document.createElement('div'),{className:'panel-sub',style:'margin-top:8px;',textContent:'“Missed Entry” unlocks once entry, stop and target are filled in.'}));
+    return outer;
+  }
   outer.appendChild(actions);
   return outer;
 }
@@ -3517,8 +3578,288 @@ function buildMgmtStatTable(rows){
   return wrap;
 }
 
+/* ---------------------------------------------------------------------
+   Missed Entries — setups that were planned but not taken. Stored in their
+   OWN documents ('missed:<id>'), completely separate from the Journal / Stats.
+--------------------------------------------------------------------- */
+let missedEntries = [];
+let missedLoaded = false;
+let missedOpenIds = new Set();
+const missedSnap = new Map();
+const MISSED_REASONS = [
+  { v:'nofill',    label:'Didn’t get filled' },
+  { v:'hesitated', label:'Hesitated' },
+  { v:'nosetup',   label:'PA I wanted to see didn’t set up' }
+];
+const MISSED_OUTCOMES = [
+  { v:'target',  label:'Would have hit the target', cls:'pos' },
+  { v:'stop',    label:'Would have hit the stop',   cls:'neg' },
+  { v:'be',      label:'Went nowhere / breakeven',  cls:'flag' },
+  { v:'unknown', label:'Not sure / still open',     cls:'' }
+];
+function missedKey(m){ return JSON.stringify(m, (k,v)=> k==='updatedAt' ? undefined : v); }
+function missedNum(v){ const n = parseFloat(String(v==null?'':v).replace(/\s/g,'').replace(',','.')); return isNaN(n) ? null : n; }
+function plannedR(plan){
+  const e = missedNum(plan.entry), st = missedNum(plan.stop), tg = missedNum(plan.target);
+  if(e==null || st==null || tg==null || e===st) return null;
+  return Math.abs(tg-e)/Math.abs(e-st);
+}
+async function writeDocStrict(key, json){
+  if(await hasFirestore()){
+    await fbDb.collection('kv').doc(key).set({ value: json, updatedAt: Date.now() });
+    return;
+  }
+  await storageSet(key, json);
+}
+let missedTimer = null, missedRetry = null;
+function persistMissed(){ if(missedTimer) clearTimeout(missedTimer); missedTimer = setTimeout(flushMissed, 400); }
+async function flushMissed(){
+  if(!missedLoaded) return true;
+  if(missedTimer){ clearTimeout(missedTimer); missedTimer = null; }
+  let ok = true;
+  for(const m of missedEntries){
+    const k = missedKey(m);
+    if(missedSnap.get(m.id)===k) continue;
+    m.updatedAt = Date.now();
+    const json = JSON.stringify(m);
+    try{ localStorage.setItem('mebak:'+m.id, json); }catch(e){ /* storage full — cloud copy still written */ }
+    try{ await writeDocStrict('missed:'+m.id, json); missedSnap.set(m.id, k); }
+    catch(e){ ok = false; showCloudStatus(e); console.warn('Missed entry save failed', e); }
+  }
+  if(!ok){ if(missedRetry) clearTimeout(missedRetry); missedRetry = setTimeout(flushMissed, 20000); }
+  return ok;
+}
+window.addEventListener('pagehide', ()=>{ flushMissed(); });
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') flushMissed(); });
+
+async function loadMissed(){
+  let loaded = [];
+  try{
+    const list = await storageList('missed:');
+    const keys = (list && list.keys) || [];
+    const res = await Promise.all(keys.map(k=> storageGet(k)));
+    loaded = res.filter(r=> r && r.value).map(r=>{ try{ return JSON.parse(r.value); }catch(e){ return null; } }).filter(Boolean);
+  }catch(e){ console.warn('Laden der Missed Entries fehlgeschlagen:', e); }
+  loaded.forEach(m=> missedSnap.set(m.id, missedKey(m)));
+  let restored = 0;
+  try{
+    const byId = new Map(loaded.map(m=>[m.id,m]));
+    for(let i=0;i<localStorage.length;i++){
+      const lk = localStorage.key(i);
+      if(!lk || !lk.startsWith('mebak:')) continue;
+      let loc = null; try{ loc = JSON.parse(localStorage.getItem(lk)); }catch(e){ continue; }
+      if(!loc || !loc.id) continue;
+      const remote = byId.get(loc.id);
+      if(!remote){ loaded.push(loc); byId.set(loc.id, loc); restored++; }
+      else if((loc.updatedAt||0) > (remote.updatedAt||0)){ loaded[loaded.indexOf(remote)] = loc; byId.set(loc.id, loc); restored++; }
+    }
+  }catch(e){ /* ignore */ }
+  missedEntries = loaded;
+  missedLoaded = true;
+  if(restored) persistMissed();
+  if(document.getElementById('missedView').classList.contains('active')) renderMissed();
+}
+
+/* called from the Plan stage */
+function canMarkMissed(t){
+  return !!(String(t.plan.entry||'').trim() && String(t.plan.stop||'').trim() && String(t.plan.target||'').trim());
+}
+async function markTradeMissed(t){
+  if(!missedLoaded){ alert('Still loading your data — try again in a moment.'); return; }
+  if(!confirm('Move this trade to “Missed Entries”?\n\nIt leaves the board and is saved separately from your Journal.')) return;
+  const m = {
+    id:'m'+uid().slice(1), createdAt:Date.now(), tradeId:t.id,
+    asset:t.asset, dir:t.dir, bias:t.bias||null,
+    patterns:(patternsOf(t)||[]).slice(),
+    where:((t.check && t.check.whereTags) || []).slice(),
+    plan:{ entry:t.plan.entry||'', stop:t.plan.stop||'', target:t.plan.target||'', entryPA:t.plan.entryPA||'' },
+    reason:null, reasonNote:'', outcome:null, potentialR:'', eval:{ verdict:null, note:'' }
+  };
+  m.updatedAt = Date.now();
+  try{
+    await writeDocStrict('missed:'+m.id, JSON.stringify(m));
+  }catch(e){
+    alert('Could not save the missed entry ('+(e && (e.code||e.message) || 'error')+'). Nothing was changed — the trade is still on your board.');
+    return;
+  }
+  try{ localStorage.setItem('mebak:'+m.id, JSON.stringify(m)); }catch(e){}
+  missedSnap.set(m.id, missedKey(m));
+  missedEntries.unshift(m);
+  trades = trades.filter(x=>x.id!==t.id);
+  savedSnap.delete(t.id); stampedKey.delete(t.id);
+  storageDelete('trade:'+t.id).catch(()=>{});
+  missedOpenIds.add(m.id);
+  openMissed(m.id);
+}
+
+function openMissed(focusId){
+  document.getElementById('dashboardView').style.display = 'none';
+  document.getElementById('journeyView').classList.remove('active');
+  document.getElementById('reviewView').classList.remove('active');
+  document.getElementById('statsView').classList.remove('active');
+  document.getElementById('missedView').classList.add('active');
+  renderMissed();
+  window.scrollTo(0,0);
+  if(focusId){ const el = document.querySelector('[data-missed-id="'+focusId+'"]'); if(el) el.scrollIntoView({block:'start'}); }
+}
+
+function renderMissed(){
+  const keepY = window.scrollY || 0;
+  const c = document.getElementById('missedContent');
+  c.innerHTML = '';
+  if(!missedLoaded){
+    c.innerHTML = '<div class="panel" style="text-align:center;color:var(--ink-faint);font-size:13px;">Loading…</div>';
+    return;
+  }
+  if(!missedEntries.length){
+    c.innerHTML = '<div class="panel" style="text-align:center;color:var(--ink-faint);font-size:13px;line-height:1.6;">No missed entries yet.<br>In a trade’s Plan stage — once entry, stop and target are filled in — use “Missed Entry”.</div>';
+    return;
+  }
+  const rOf = m=> missedNum(m.potentialR);
+  const fmtR = v=> v==null ? '—' : (v>0?'+':'')+v.toFixed(2)+'R';
+  const sum = arr=> arr.reduce((a,b)=>a+b,0);
+  const rs = missedEntries.map(rOf).filter(v=>v!=null);
+  const missedWins = rs.filter(v=>v>0), avoided = rs.filter(v=>v<0);
+
+  const tiles = document.createElement('div'); tiles.className='stat-row';
+  tiles.innerHTML = `
+    <div class="stat-tile"><div class="k">Missed entries</div><div class="v">${missedEntries.length}</div></div>
+    <div class="stat-tile"><div class="k">Would have won</div><div class="v pos">${missedEntries.filter(m=>m.outcome==='target').length}</div></div>
+    <div class="stat-tile"><div class="k">Would have lost</div><div class="v neg">${missedEntries.filter(m=>m.outcome==='stop').length}</div></div>
+    <div class="stat-tile"><div class="k">Net potential R</div><div class="v ${sum(rs)>=0?'pos':'neg'}">${fmtR(rs.length?sum(rs):null)}</div></div>`;
+  c.appendChild(tiles);
+  const tiles2 = document.createElement('div'); tiles2.className='stat-row'; tiles2.style.marginTop='10px';
+  tiles2.innerHTML = `
+    <div class="stat-tile"><div class="k">R left on the table</div><div class="v pos">${fmtR(missedWins.length?sum(missedWins):null)}</div></div>
+    <div class="stat-tile"><div class="k">R avoided</div><div class="v neg">${fmtR(avoided.length?sum(avoided):null)}</div></div>`;
+  c.appendChild(tiles2);
+
+  /* by reason */
+  const rp = document.createElement('div'); rp.className='panel'; rp.style.marginTop='14px';
+  rp.innerHTML = '<div class="panel-label">Why were they missed?</div>';
+  const tbl = document.createElement('table'); tbl.className='rv-table'; tbl.style.marginTop='8px';
+  tbl.innerHTML = '<thead><tr><th>Reason</th><th style="text-align:right;">Times</th><th style="text-align:right;">Would have won</th><th style="text-align:right;">Would have lost</th><th class="rv-r">Net potential R</th></tr></thead>';
+  const tb = document.createElement('tbody');
+  [...MISSED_REASONS, {v:null,label:'Not answered yet'}].forEach(r=>{
+    const list = missedEntries.filter(m=> (m.reason||null)===r.v); if(!list.length) return;
+    const net = list.map(rOf).filter(v=>v!=null);
+    const tr = document.createElement('tr'); tr.style.cursor='default';
+    tr.innerHTML = `<td>${escapeHtml(r.label)}</td><td style="text-align:right;">${list.length}</td><td style="text-align:right;">${list.filter(m=>m.outcome==='target').length}</td><td style="text-align:right;">${list.filter(m=>m.outcome==='stop').length}</td><td class="rv-r ${net.length&&sum(net)<0?'neg':'pos'}">${net.length?fmtR(sum(net)):'—'}</td>`;
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb);
+  const sc = document.createElement('div'); sc.style.overflowX='auto'; sc.appendChild(tbl); rp.appendChild(sc);
+  c.appendChild(rp);
+
+  /* entries */
+  [...missedEntries].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).forEach(m=> c.appendChild(missedCardEl(m)));
+  if(keepY) window.scrollTo(0, keepY);
+}
+
+function missedCardEl(m){
+  const card = document.createElement('div'); card.className='me-card'; card.dataset.missedId = m.id;
+  const open = missedOpenIds.has(m.id);
+  const reasonLabel = (MISSED_REASONS.find(r=>r.v===m.reason)||{}).label;
+  const outc = MISSED_OUTCOMES.find(o=>o.v===m.outcome);
+  const r = missedNum(m.potentialR);
+  const head = document.createElement('div'); head.className='me-head';
+  head.innerHTML = `<div>
+      <div class="me-title">${escapeHtml(m.asset||'')} · ${m.dir==='long'?'Long':'Short'} · ${escapeHtml((m.patterns||[]).join(', ')||'—')}</div>
+      <div class="me-sub">${escapeHtml(fmtDateTime(m.createdAt)||'')}${reasonLabel?' · '+escapeHtml(reasonLabel):''}${outc?' · '+escapeHtml(outc.label):''}</div>
+    </div>
+    <div class="me-r ${r>0?'pos':(r<0?'neg':'')}">${r==null?'':((r>0?'+':'')+r.toFixed(2)+'R')} <span style="color:var(--ink-faint);font-weight:400;">${open?'▲':'▼'}</span></div>`;
+  head.addEventListener('click', ()=>{ if(missedOpenIds.has(m.id)) missedOpenIds.delete(m.id); else missedOpenIds.add(m.id); renderMissed(); });
+  card.appendChild(head);
+  if(!open) return card;
+
+  const body = document.createElement('div'); body.className='me-body';
+  const rerender = ()=>{ persistMissed(); renderMissed(); };
+
+  const plan = document.createElement('div'); plan.className='jd-grid'; plan.style.marginTop='12px';
+  plan.innerHTML = `
+    <div class="jd-row"><div class="jd-label">Entry</div><div class="jd-value">${escapeHtml(m.plan.entry||'—')}</div></div>
+    <div class="jd-row"><div class="jd-label">Stop</div><div class="jd-value">${escapeHtml(m.plan.stop||'—')}</div></div>
+    <div class="jd-row"><div class="jd-label">Target</div><div class="jd-value">${escapeHtml(m.plan.target||'—')}</div></div>
+    <div class="jd-row"><div class="jd-label">Entry trigger</div><div class="jd-value">${escapeHtml(m.plan.entryPA||'—')}</div></div>`;
+  body.appendChild(plan);
+
+  /* why */
+  body.appendChild(Object.assign(document.createElement('div'),{className:'sub-label',textContent:'Why did you miss this one?'}));
+  const reasonRow = document.createElement('div'); reasonRow.className='opt-row';
+  MISSED_REASONS.forEach(o=>{
+    const chip = document.createElement('div'); chip.className='opt'+(m.reason===o.v?' selected':''); chip.textContent=o.label;
+    chip.addEventListener('click', ()=>{ m.reason = (m.reason===o.v ? null : o.v); rerender(); });
+    reasonRow.appendChild(chip);
+  });
+  body.appendChild(reasonRow);
+  const rn = document.createElement('input'); rn.type='text'; rn.style.marginTop='10px'; rn.placeholder='Note (optional)'; rn.value=m.reasonNote||'';
+  rn.addEventListener('input', ()=>{ m.reasonNote = rn.value; persistMissed(); });
+  body.appendChild(rn);
+
+  /* outcome */
+  body.appendChild(Object.assign(document.createElement('div'),{className:'sub-label',textContent:'What was the outcome of this opportunity?'}));
+  const outRow = document.createElement('div'); outRow.className='opt-row';
+  MISSED_OUTCOMES.forEach(o=>{
+    const chip = document.createElement('div'); chip.className='opt'+(m.outcome===o.v?' selected '+o.cls:''); chip.textContent=o.label;
+    chip.addEventListener('click', ()=>{
+      m.outcome = (m.outcome===o.v ? null : o.v);
+      /* pre-fill Potential R when it's still empty — editable afterwards */
+      if(m.outcome && !String(m.potentialR||'').trim()){
+        if(m.outcome==='target'){ const pr = plannedR(m.plan); if(pr!=null) m.potentialR = pr.toFixed(2); }
+        else if(m.outcome==='stop') m.potentialR = '-1';
+        else if(m.outcome==='be') m.potentialR = '0';
+      }
+      rerender();
+    });
+    outRow.appendChild(chip);
+  });
+  body.appendChild(outRow);
+
+  const prF = document.createElement('div'); prF.className='field'; prF.style.marginTop='12px';
+  const pr = plannedR(m.plan);
+  prF.innerHTML = '<label>Potential R'+(pr!=null?' <span class="sub-hint">planned R:R was '+pr.toFixed(2)+'</span>':'')+'</label>';
+  const prI = document.createElement('input'); prI.type='text'; prI.value=m.potentialR||''; prI.placeholder='e.g. 2.4 or -1';
+  prI.addEventListener('input', ()=>{ m.potentialR = prI.value; persistMissed(); });
+  prI.addEventListener('blur', ()=>{
+    if(m.outcome==='stop' && /^\s*[0-9.,]/.test(prI.value)){ prI.value = '-'+prI.value.trim(); m.potentialR = prI.value; }
+    persistMissed(); renderMissed();
+  });
+  prF.appendChild(prI); body.appendChild(prF);
+
+  /* further evaluation */
+  const box = document.createElement('div'); box.className='eval-box';
+  box.appendChild(Object.assign(document.createElement('div'),{className:'sub-label',textContent:'Further evaluation',style:'margin-top:0;'}));
+  const vRow = document.createElement('div'); vRow.className='opt-row';
+  MGMT_VERDICTS.forEach(o=>{
+    const sel = m.eval && m.eval.verdict===o.v;
+    const chip = document.createElement('div'); chip.className='opt'+(sel?' selected'+(o.v==='poor'?' neg':''):''); chip.textContent=o.label;
+    chip.addEventListener('click', ()=>{ if(!m.eval) m.eval={verdict:null,note:''}; m.eval.verdict = (sel ? null : o.v); rerender(); });
+    vRow.appendChild(chip);
+  });
+  box.appendChild(vRow);
+  const en = document.createElement('input'); en.type='text'; en.style.marginTop='10px'; en.placeholder='What would you do differently next time?'; en.value=(m.eval&&m.eval.note)||'';
+  en.addEventListener('input', ()=>{ if(!m.eval) m.eval={verdict:null,note:''}; m.eval.note = en.value; persistMissed(); });
+  box.appendChild(en);
+  body.appendChild(box);
+
+  const del = document.createElement('button'); del.className='btn'; del.textContent='Delete this entry'; del.style.cssText='margin-top:16px;color:var(--nogo);';
+  del.addEventListener('click', ()=>{
+    if(!confirm('Delete this missed entry? This can’t be undone.')) return;
+    missedEntries = missedEntries.filter(x=>x.id!==m.id); missedSnap.delete(m.id); missedOpenIds.delete(m.id);
+    try{ localStorage.removeItem('mebak:'+m.id); }catch(e){}
+    storageDelete('missed:'+m.id).catch(()=>{});
+    renderMissed();
+  });
+  body.appendChild(del);
+  card.appendChild(body);
+  return card;
+}
+
+document.getElementById('missedNavBtn').addEventListener('click', ()=> openMissed());
+document.getElementById('missedBackBtn').addEventListener('click', backToDashboard);
+
 renderDashboard();
-loadTrades();
+loadTrades().then(loadMissed);
 
 </script>
 </body>
