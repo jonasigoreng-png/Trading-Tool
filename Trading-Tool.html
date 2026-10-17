@@ -2653,6 +2653,9 @@ function matchesReviewExtra(t){
   if(type==='direction') return (t.dir==='long'?'Long':'Short')===value;
   if(type==='location') return !!(t.check && t.check.whereTags && t.check.whereTags.includes(value));
   if(type==='trigger') return (t.plan && t.plan.entryPA)===value;
+  if(type==='tod') return timeOfDayKey(t)===value;
+  if(type==='weekday') return weekdayKey(t)===value;
+  if(type==='hour') return hourKey(t)===value;
   return true;
 }
 
@@ -2705,7 +2708,7 @@ function renderReview(){
   const filterRow = document.createElement('div'); filterRow.className='filter-row';
 
   if(reviewFilterExtra){
-    const FILTER_LABEL = { setup:'Setup', combo:'Combo', direction:'Direction', location:'Location', trigger:'Entry trigger' };
+    const FILTER_LABEL = { setup:'Setup', combo:'Combo', direction:'Direction', location:'Location', trigger:'Entry trigger', tod:'Time of day', weekday:'Weekday', hour:'Hour' };
     const chip = document.createElement('div'); chip.className = 'filter-chip';
     chip.innerHTML = `${FILTER_LABEL[reviewFilterExtra.type]}: ${escapeHtml(reviewFilterExtra.value)} <button title="Clear filter">✕</button>`;
     chip.querySelector('button').addEventListener('click', ()=>{ reviewFilterExtra = null; renderReview(); });
@@ -2901,10 +2904,10 @@ function groupStats(rows, keyFn){
 /* limit: how many rows to show (sorted by Total R, best first). Pass
    Infinity for groupings with a naturally small, fixed universe (asset,
    direction, location) so nothing gets cut off. */
-function buildStatTable(title, groups, colLabel, limit, filterType){
+function buildStatTable(title, groups, colLabel, limit, filterType, order, subHint){
   limit = limit || 8;
   const wrap = document.createElement('div'); wrap.className='panel'; wrap.style.marginTop='14px';
-  const hint = filterType ? ' <span class="sub-hint">click a row to see those trades in the Journal</span>' : '';
+  const hint = ' <span class="sub-hint">'+(subHint ? subHint+(filterType?' — ':'') : '')+(filterType ? 'click a row to see those trades in the Journal' : '')+'</span>';
   wrap.innerHTML = `<div class="panel-label">${title}${hint}</div>`;
   if(groups.length===0){
     const p = document.createElement('div'); p.style.cssText='color:var(--ink-faint);font-size:12.5px;'; p.textContent='Not enough data yet.';
@@ -2924,7 +2927,7 @@ function buildStatTable(title, groups, colLabel, limit, filterType){
     <th style="text-align:right;">Net P&amp;L</th>
   </tr></thead>`;
   const tbody = document.createElement('tbody');
-  [...groups].sort((a,b)=>b.totalR-a.totalR).slice(0,limit).forEach(g=>{
+  [...groups].sort((a,b)=> order ? (order.indexOf(a.key)-order.indexOf(b.key)) : (b.totalR-a.totalR)).slice(0,limit).forEach(g=>{
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${escapeHtml(g.key)} <span class="rv-sub">(${g.wins}W / ${g.losses}L${g.bes?' / '+g.bes+'BE':''})</span></td>
@@ -2942,6 +2945,51 @@ function buildStatTable(title, groups, colLabel, limit, filterType){
   table.appendChild(tbody);
   tableWrap.appendChild(table);
   wrap.appendChild(tableWrap);
+  return wrap;
+}
+
+/* ---------------------------------------------------------------------
+   Best times to trade — based on the ENTRY time (when the trade went active),
+   in your local time. Falls back to the creation time for imported trades.
+--------------------------------------------------------------------- */
+const TOD_BUCKETS = [
+  { key:'Night (00–06)',     from:0,  to:6 },
+  { key:'Morning (06–11)',   from:6,  to:11 },
+  { key:'Midday (11–14)',    from:11, to:14 },
+  { key:'Afternoon (14–18)', from:14, to:18 },
+  { key:'Evening (18–24)',   from:18, to:24 }
+];
+const WEEKDAY_NAMES = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+function entryDateOf(t){ const ms = t.activeAt || t.createdAt; return ms ? new Date(ms) : null; }
+function timeOfDayKey(t){ const d = entryDateOf(t); if(!d) return null; const h = d.getHours(); const b = TOD_BUCKETS.find(x=>h>=x.from && h<x.to); return b ? b.key : null; }
+function weekdayKey(t){ const d = entryDateOf(t); return d ? WEEKDAY_NAMES[(d.getDay()+6)%7] : null; }
+function hourKey(t){ const d = entryDateOf(t); if(!d) return null; const h = d.getHours(); return String(h).padStart(2,'0')+':00–'+String((h+1)%24).padStart(2,'0')+':00'; }
+
+function buildTimeStats(rows){
+  const byTod = groupStats(rows, t=> [timeOfDayKey(t)]);
+  const byDay = groupStats(rows, t=> [weekdayKey(t)]);
+  const byHour = groupStats(rows, t=> [hourKey(t)]);
+  const wrap = document.createElement('div');
+  if(!byTod.length && !byDay.length){
+    return wrap; /* no trade has an entry time yet */
+  }
+  const ov = document.createElement('div'); ov.className='panel'; ov.style.marginTop='14px';
+  ov.innerHTML = '<div class="panel-label">When do you trade best? <span class="sub-hint">by entry time, your local time — best &amp; worst by Total R (2+ trades preferred)</span></div>';
+  const r1 = document.createElement('div'); r1.className='stat-row'; r1.style.marginTop='10px';
+  r1.innerHTML =
+    highlightTile('Best Time of Day', pickExtreme(byTod, 2, false), 'tod') +
+    highlightTile('Weakest Time of Day', pickExtreme(byTod, 2, true), 'tod') +
+    highlightTile('Best Weekday', pickExtreme(byDay, 2, false), 'weekday') +
+    highlightTile('Weakest Weekday', pickExtreme(byDay, 2, true), 'weekday');
+  ov.appendChild(r1);
+  ov.querySelectorAll('[data-filter-type]').forEach(el=>{
+    el.addEventListener('click', ()=> openReviewFiltered(el.dataset.filterType, el.dataset.filterValue));
+  });
+  wrap.appendChild(ov);
+  wrap.appendChild(buildStatTable('By Time of Day', byTod, 'Time of day', Infinity, 'tod', TOD_BUCKETS.map(b=>b.key), 'in chronological order'));
+  wrap.appendChild(buildStatTable('By Weekday', byDay, 'Weekday', Infinity, 'weekday', WEEKDAY_NAMES, 'Monday → Sunday'));
+  const hourOrder = Array.from({length:24},(_,h)=> String(h).padStart(2,'0')+':00–'+String((h+1)%24).padStart(2,'0')+':00');
+  wrap.appendChild(buildStatTable('By Hour of Day', byHour, 'Hour', Infinity, 'hour', hourOrder, 'only hours with trades'));
   return wrap;
 }
 
@@ -3497,6 +3545,7 @@ function renderStats(){
   if(byLocation.length) container.appendChild(buildStatTable('By Location', byLocation, 'Location', Infinity, 'location'));
   const byTrigger = groupStats(rows, t=> (t.plan && t.plan.entryPA) ? [t.plan.entryPA] : []);
   if(byTrigger.length) container.appendChild(buildStatTable('By Entry Trigger', byTrigger, 'Entry trigger', Infinity, 'trigger'));
+  container.appendChild(buildTimeStats(rows));
   const mgmtPanel = buildMgmtStatTable(rows);
   if(mgmtPanel) container.appendChild(mgmtPanel);
   const cutPanel = buildCutCompare(rows);
