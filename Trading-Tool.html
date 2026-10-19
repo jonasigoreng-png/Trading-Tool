@@ -672,7 +672,7 @@ async function storageGet(key){
   if(await hasFirestore()){
     try{
       const docSnap = await fbDb.collection('kv').doc(key).get();
-      if(docSnap.exists) return { key, value: docSnap.data().value, shared:false };
+      if(docSnap.exists) return { key, value: docSnap.data().value, shared:false, updatedAt: docSnap.data().updatedAt };
       return null;
     }catch(e){ console.warn('Firestore-Lesevorgang fehlgeschlagen, nutze Fallback:', e); cloudLoadFailed = true; }
   }
@@ -769,7 +769,7 @@ async function loadTrades(){
     if(keys.length){
       const results = await Promise.all(keys.map(k=> storageGet(k)));
       trades = results.filter(r=> r && r.value).map(r=>{
-        try{ return JSON.parse(r.value); }catch(e){ return null; }
+        try{ const t = JSON.parse(r.value); if(r.updatedAt!=null && t && t.id) remoteVer.set(t.id, r.updatedAt); return t; }catch(e){ return null; }
       }).filter(Boolean);
     }else{
       /* Migration: nothing under the new scheme yet — check the old
@@ -861,6 +861,8 @@ function dedupeImportedTrades(){
 --------------------------------------------------------------------- */
 const savedSnap = new Map();   /* id -> content key last confirmed in the cloud */
 const stampedKey = new Map();  /* id -> content key last stamped + backed up locally */
+const remoteVer = new Map();   /* id -> version (doc updatedAt) of the cloud copy this device last saw/wrote */
+const ownVers = new Set();     /* versions written by THIS device (so the live listener ignores its own echoes) */
 function tradeKey(t){
   /* screenshots are big base64 strings — for change detection their length is enough,
      serializing all of them on every save made phones crawl */
@@ -937,10 +939,135 @@ function stampAndBackup(){
 async function writeTradeStrict(t){
   const json = JSON.stringify(t);
   if(await hasFirestore()){
-    await fbDb.collection('kv').doc('trade:'+t.id).set({ value: json, updatedAt: Date.now() });
+    /* Never silently overwrite a newer version written by another device (phone ↔ desktop):
+       the write only goes through if the cloud copy is still the one this device last saw. */
+    const ref = fbDb.collection('kv').doc('trade:'+t.id);
+    const now = Date.now();
+    const seen = remoteVer.get(t.id);
+    ownVers.add(now);
+    await fbDb.runTransaction(async tx=>{
+      const snap = await tx.get(ref);
+      if(snap.exists && seen!==undefined && snap.data().updatedAt!==seen){
+        const err = new Error('changed on another device'); err.code = 'conflict'; throw err;
+      }
+      if(!snap.exists && seen!==undefined){
+        const err = new Error('deleted on another device'); err.code = 'conflict'; throw err;
+      }
+      tx.set(ref, { value: json, updatedAt: now });
+    });
+    remoteVer.set(t.id, now);
     return;
   }
   await storageSet('trade:'+t.id, json); /* Claude-storage / localStorage environments */
+}
+
+
+function showNotice(msg){
+  let el = document.getElementById('noticeToast');
+  if(!el){
+    el = document.createElement('div'); el.id='noticeToast';
+    el.style.cssText = 'position:fixed;left:14px;bottom:44px;z-index:9999;max-width:340px;background:#10283a;color:#8cc8f0;border:1px solid #1d4a6b;border-radius:8px;padding:10px 13px;font-size:12.5px;line-height:1.45;font-family:var(--mono);';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  clearTimeout(el._t); el._t = setTimeout(()=>{ if(el.parentNode) el.remove(); }, 9000);
+}
+function liteBackup(t){
+  try{
+    const lite = Object.assign({}, t, { journal: Object.assign({}, t.journal, { shots: [] }), _noShots: true });
+    localStorage.setItem('tjbak:'+t.id, JSON.stringify(lite));
+  }catch(e){}
+}
+/* put a trade that came from the cloud into memory without marking it as a local edit */
+function applyRemoteTrade(t, ver){
+  const i = trades.findIndex(x=>x.id===t.id);
+  if(i>-1) trades[i] = t; else trades.unshift(t);
+  const k = tradeKey(t);
+  savedSnap.set(t.id,k); stampedKey.set(t.id,k);
+  if(ver!=null) remoteVer.set(t.id, ver);
+  liteBackup(t);
+  if(openTradeId===t.id) openStage = t.stage;
+}
+function removeTradeLocally(id){
+  trades = trades.filter(x=>x.id!==id);
+  savedSnap.delete(id); stampedKey.delete(id); remoteVer.delete(id);
+  try{ localStorage.removeItem('tjbak:'+id); }catch(e){}
+}
+function refreshViews(){
+  if(openTradeId && !trades.find(x=>x.id===openTradeId)){ backToDashboard(); return; }
+  const active = id=> document.getElementById(id).classList.contains('active');
+  if(active('journeyView')) renderJourney();
+  else if(active('reviewView')) renderReview();
+  else if(active('statsView')) renderStats();
+  else if(active('missedView')) renderMissed();
+  else renderDashboard();
+}
+async function adoptRemoteTrade(id){
+  const snap = await fbDb.collection('kv').doc('trade:'+id).get();
+  const local = trades.find(x=>x.id===id);
+  if(local){ try{ localStorage.setItem('tjconf:'+id, JSON.stringify(Object.assign({}, local, { journal: Object.assign({}, local.journal, { shots: [] }) }))); }catch(e){} }
+  if(!snap.exists){
+    removeTradeLocally(id);
+    showNotice('A trade was deleted on another device — it was removed here too.');
+  }else{
+    let t = null; try{ t = JSON.parse(snap.data().value); }catch(e){ throw e; }
+    applyRemoteTrade(t, snap.data().updatedAt);
+    showNotice('“'+(t.asset||'Trade')+'” was changed on another device — showing the newer version. Your last edit here was not saved.');
+  }
+  refreshViews();
+}
+
+/* Live sync: changes made on another device (phone ↔ desktop) show up here within seconds,
+   so an open tab never works on an outdated copy. Trades with unsaved local edits are left alone. */
+let liveUnsubTrades = null, liveUnsubMissed = null;
+function startLiveSync(){
+  if(!fbDb || liveUnsubTrades) return;
+  hasFirestore().then(ok=>{
+    if(!ok) return;
+    const range = prefix => fbDb.collection('kv')
+      .where(firebase.firestore.FieldPath.documentId(), '>=', prefix)
+      .where(firebase.firestore.FieldPath.documentId(), '<', prefix + '');
+    try{
+      liveUnsubTrades = range('trade:').onSnapshot(snap=>{
+        let changed = false;
+        snap.docChanges().forEach(ch=>{
+          if(ch.doc.metadata.hasPendingWrites) return;
+          const id = ch.doc.id.slice(6);
+          const local = trades.find(x=>x.id===id);
+          if(ch.type==='removed'){
+            if(local && savedSnap.has(id) && tradeKey(local)===savedSnap.get(id)){ removeTradeLocally(id); changed = true; }
+            return;
+          }
+          const d = ch.doc.data();
+          if(ownVers.has(d.updatedAt) || d.updatedAt===remoteVer.get(id)) return;
+          if(local && tradeKey(local)!==savedSnap.get(id)) return;   /* unsaved local edits: write guard handles it */
+          let t = null; try{ t = JSON.parse(d.value); }catch(e){ return; }
+          if(!t || !t.id) return;
+          applyRemoteTrade(t, d.updatedAt); changed = true;
+        });
+        if(changed) refreshViews();
+      }, err=> console.warn('Live sync (trades):', err));
+      liveUnsubMissed = range('missed:').onSnapshot(snap=>{
+        let changed = false;
+        snap.docChanges().forEach(ch=>{
+          if(ch.doc.metadata.hasPendingWrites) return;
+          const id = ch.doc.id.slice(7);
+          const local = missedEntries.find(x=>x.id===id);
+          if(ch.type==='removed'){
+            if(local && missedKey(local)===missedSnap.get(id)){ missedEntries = missedEntries.filter(x=>x.id!==id); missedSnap.delete(id); try{ localStorage.removeItem('mebak:'+id); }catch(e){} changed = true; }
+            return;
+          }
+          let m = null; try{ m = JSON.parse(ch.doc.data().value); }catch(e){ return; }
+          if(!m || !m.id) return;
+          if(local && missedKey(local)!==missedSnap.get(id)) return;
+          if(local && missedKey(local)===missedKey(m)) return;
+          if(local) missedEntries[missedEntries.indexOf(local)] = m; else missedEntries.unshift(m);
+          missedSnap.set(id, missedKey(m)); changed = true;
+        });
+        if(changed && document.getElementById('missedView').classList.contains('active')) renderMissed();
+      }, err=> console.warn('Live sync (missed):', err));
+    }catch(e){ console.warn('Live sync konnte nicht gestartet werden:', e); }
+  });
 }
 
 let persistTimer = null, retryTimer = null;
@@ -954,7 +1081,14 @@ async function flushTrades(){
   let firstErr = null;
   await Promise.all(dirty.map(async ({t,k})=>{
     try{ await writeTradeStrict(t); savedSnap.set(t.id,k); }
-    catch(e){ if(!firstErr) firstErr = e; console.warn('Speichern fehlgeschlagen für', t.id, e); }
+    catch(e){
+      if(e && e.code==='conflict'){
+        /* another device changed this trade meanwhile → take its version, keep a copy of ours */
+        try{ await adoptRemoteTrade(t.id); }catch(e2){ if(!firstErr) firstErr = e2; }
+      }else{
+        if(!firstErr) firstErr = e; console.warn('Speichern fehlgeschlagen für', t.id, e);
+      }
+    }
   }));
   if(firstErr){
     showCloudStatus(firstErr);
@@ -3908,7 +4042,7 @@ document.getElementById('missedNavBtn').addEventListener('click', ()=> openMisse
 document.getElementById('missedBackBtn').addEventListener('click', backToDashboard);
 
 renderDashboard();
-loadTrades().then(loadMissed);
+loadTrades().then(loadMissed).then(startLiveSync);
 
 </script>
 </body>
