@@ -418,9 +418,7 @@ html{ -webkit-text-size-adjust:100%; }
       <input type="file" id="importFile" accept=".xlsx,.xls" style="display:none;">
     </div>
     <div class="import-status" id="importStatus"></div>
-    <div id="importCleanupRow" style="display:none;margin-top:4px;">
-      <button id="clearImportedBtn" style="background:none;border:none;color:var(--ink-faint);font-family:var(--mono);font-size:11px;text-decoration:underline;cursor:pointer;padding:0;">Remove all imported trades</button>
-    </div>
+    <div style="margin-top:10px;"><button id="recoverBtn" style="background:none;border:none;color:var(--ink-faint);font-family:var(--mono);font-size:11px;text-decoration:underline;cursor:pointer;padding:0;">Recover deleted / missing trades</button></div>
   </div>
 
   <!-- ============ JOURNEY ============ -->
@@ -757,6 +755,7 @@ function outcomeOf(t){
 
 let trades = [];
 let tradesLoaded = false;
+let loadReport = { keys:0, ok:0, failed:[] };   /* what the last cloud read returned — shown in the Recover dialog */
 
 /* Each trade lives in its own document ('trade:<id>'), not one shared blob.
    This is what makes storing screenshots directly in Firestore safe: one
@@ -768,9 +767,13 @@ async function loadTrades(){
     const keys = (list && list.keys) || [];
     if(keys.length){
       const results = await Promise.all(keys.map(k=> storageGet(k)));
-      trades = results.filter(r=> r && r.value).map(r=>{
-        try{ const t = JSON.parse(r.value); if(r.updatedAt!=null && t && t.id) remoteVer.set(t.id, r.updatedAt); return t; }catch(e){ return null; }
+      loadReport = { keys:keys.length, ok:0, failed:[] };
+      trades = results.map((r,i)=>{
+        if(!r || !r.value){ loadReport.failed.push(keys[i]+' (could not be read)'); return null; }
+        try{ const t = JSON.parse(r.value); if(r.updatedAt!=null && t && t.id) remoteVer.set(t.id, r.updatedAt); loadReport.ok++; return t; }
+        catch(e){ loadReport.failed.push(keys[i]+' (damaged data)'); return null; }
       }).filter(Boolean);
+      if(loadReport.failed.length) cloudLoadFailed = true;
     }else{
       /* Migration: nothing under the new scheme yet — check the old
          single-document scheme and split it into per-trade docs once. */
@@ -1070,6 +1073,92 @@ function startLiveSync(){
   });
 }
 
+
+/* ---------------------------------------------------------------------
+   Safety net: deleting a trade first copies it to the cloud trash, and the
+   "Recover" dialog can bring back trades from the trash or from this
+   device's local backups.
+--------------------------------------------------------------------- */
+async function trashTrade(t){
+  const rec = { value: JSON.stringify(t), deletedAt: Date.now() };
+  try{ localStorage.setItem('tjtrash:'+t.id, JSON.stringify(Object.assign({}, t, { journal: Object.assign({}, t.journal, { shots: [] }), _noShots:true, _deletedAt: rec.deletedAt }))); }catch(e){}
+  try{
+    await writeDocStrict('trash:'+t.id, JSON.stringify({ trade: t, deletedAt: rec.deletedAt }));
+  }catch(e){
+    /* too big (screenshots)? keep at least the text part */
+    try{ await writeDocStrict('trash:'+t.id, JSON.stringify({ trade: Object.assign({}, t, { journal: Object.assign({}, t.journal, { shots: [] }) }), deletedAt: rec.deletedAt, noShots:true })); }
+    catch(e2){ console.warn('Papierkorb nicht erreichbar:', e2); }
+  }
+}
+async function deleteTradeSafely(t){
+  await trashTrade(t);
+  trades = trades.filter(x=>x.id!==t.id);
+  savedSnap.delete(t.id); stampedKey.delete(t.id); remoteVer.delete(t.id);
+  storageDelete('trade:'+t.id).catch(()=>{});
+}
+
+async function openRecover(){
+  let ov = document.getElementById('recoverOverlay'); if(ov) ov.remove();
+  ov = document.createElement('div'); ov.id='recoverOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow:auto;';
+  const box = document.createElement('div');
+  box.style.cssText = 'width:100%;max-width:560px;background:var(--panel,#12151c);border:1px solid var(--line,#262b36);border-radius:12px;padding:22px;margin-top:20px;';
+  box.innerHTML = '<div style="font-family:var(--mono);font-weight:700;letter-spacing:.06em;font-size:13px;margin-bottom:4px;">RECOVER TRADES</div><div id="recBody" style="color:var(--ink-dim);font-size:13px;">Looking…</div>';
+  ov.appendChild(box); document.body.appendChild(ov);
+  ov.addEventListener('click', e=>{ if(e.target===ov) ov.remove(); });
+  const body = box.querySelector('#recBody');
+
+  const have = new Set(trades.map(t=>t.id));
+  const found = new Map();   /* id -> { t, source, when } */
+  /* 1) cloud trash */
+  try{
+    const list = await storageList('trash:');
+    for(const k of ((list && list.keys) || [])){
+      const r = await storageGet(k); if(!r || !r.value) continue;
+      try{ const o = JSON.parse(r.value); if(o && o.trade && !have.has(o.trade.id)) found.set(o.trade.id, { t:o.trade, source:'deleted trade (cloud trash)'+(o.noShots?', without screenshots':''), when:o.deletedAt, trashKey:k }); }catch(e){}
+    }
+  }catch(e){}
+  /* 2) local copies on THIS device */
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const lk = localStorage.key(i); if(!lk) continue;
+      const m = lk.match(/^(tjbak|tjconf|tjtrash|trade):/); if(!m) continue;
+      let loc = null; try{ loc = JSON.parse(localStorage.getItem(lk)); }catch(e){ continue; }
+      if(!loc || !loc.id || have.has(loc.id) || found.has(loc.id)) continue;
+      const label = ({tjbak:'backup on this device', tjconf:'your edit that lost against another device', tjtrash:'deleted on this device', trade:'copy on this device'})[m[1]];
+      found.set(loc.id, { t:loc, source:label+(loc._noShots?' (text only, no screenshots)':''), when:loc.updatedAt||loc._deletedAt });
+    }
+  }catch(e){}
+
+  const rep = loadReport || {keys:0,ok:0,failed:[]};
+  let html = '<div style="margin:10px 0 14px;font-size:12.5px;line-height:1.5;">Cloud read at start: <b>'+rep.ok+'</b> of <b>'+rep.keys+'</b> trades loaded.'+(rep.failed.length?'<br><span style="color:var(--nogo,#e5646e);">Problem with: '+escapeHtml(rep.failed.join(', '))+'</span>':'')+'</div>';
+  if(!found.size){
+    html += '<div>Nothing to recover on this device — no deleted trades in the cloud trash and no local backups of missing trades.<br><br>Tip: open this dialog on your <b>other device</b> too — it keeps its own local backups.</div>';
+  }
+  body.innerHTML = html;
+  [...found.values()].sort((a,b)=>(b.when||0)-(a.when||0)).forEach(f=>{
+    const t = f.t;
+    const row = document.createElement('div');
+    row.style.cssText = 'border:1px solid var(--line-soft,#1d2129);border-radius:8px;padding:10px 12px;margin-top:8px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;';
+    row.innerHTML = '<div><div style="font-family:var(--mono);font-size:13px;font-weight:600;">'+escapeHtml(t.asset||'?')+' · '+(t.dir==='long'?'Long':'Short')+' · '+escapeHtml(t.stage||'')+(t.closeData&&t.closeData.rMultiple?' · '+escapeHtml(t.closeData.rMultiple)+'R':'')+'</div><div style="font-size:11.5px;color:var(--ink-faint);margin-top:3px;">'+escapeHtml(f.source)+(f.when?' · '+escapeHtml(fmtDateTime(f.when)||''):'')+(t.createdAt?' · created '+escapeHtml(fmtDateTime(t.createdAt)||''):'')+'</div></div>';
+    const b = document.createElement('button'); b.className='btn primary'; b.textContent='Restore';
+    b.addEventListener('click', async ()=>{
+      const copy = JSON.parse(JSON.stringify(t)); delete copy._noShots; delete copy._deletedAt;
+      copy.journal = copy.journal || { shots:[] }; copy.journal.shots = copy.journal.shots || [];
+      trades.unshift(copy);
+      persist();
+      if(f.trashKey) storageDelete(f.trashKey).catch(()=>{});
+      try{ localStorage.removeItem('tjtrash:'+copy.id); localStorage.removeItem('tjconf:'+copy.id); }catch(e){}
+      b.textContent='Restored ✓'; b.disabled = true;
+      refreshViews();
+    });
+    row.appendChild(b); body.appendChild(row);
+  });
+  const close = document.createElement('button'); close.className='btn'; close.textContent='Close'; close.style.marginTop='16px';
+  close.addEventListener('click', ()=> ov.remove());
+  body.appendChild(close);
+}
+
 let persistTimer = null, retryTimer = null;
 async function flushTrades(){
   if(!tradesLoaded) return;
@@ -1113,23 +1202,7 @@ let openStage = null;
 --------------------------------------------------------------------- */
 let dragTradeId = null;
 
-/* Shows/updates the small "Remove all imported trades" link under the
-   Import button — only visible when there's something to remove, so it
-   doesn't clutter the UI for anyone who never imports. Used both as a
-   normal cleanup tool and as the fix for accidental duplicate imports
-   (e.g. clicking Import twice before the replace-on-reimport dialog
-   existed). */
-function updateImportCleanupUI(){
-  const row = document.getElementById('importCleanupRow');
-  if(!row) return;
-  const count = trades.filter(t=>t.imported).length;
-  row.style.display = count>0 ? 'block' : 'none';
-  const btn = document.getElementById('clearImportedBtn');
-  if(btn) btn.textContent = `Remove all imported trades (${count})`;
-}
-
 function renderDashboard(){
-  updateImportCleanupUI();
   const cols = document.getElementById('stageCols');
   cols.innerHTML = '';
   if(!tradesLoaded){
@@ -1191,10 +1264,8 @@ function renderDashboard(){
       card.addEventListener('click', ()=> openJourney(t.id));
       card.querySelector('.tc-delete').addEventListener('click', (e)=>{
         e.stopPropagation();
-        if(confirm('Delete this trade? This can’t be undone.')){
-          trades = trades.filter(x=>x.id!==t.id);
-          storageDelete('trade:'+t.id).catch(()=>{});
-          renderDashboard();
+        if(confirm('Delete this trade? (It goes to the trash — you can bring it back via “Recover”.)')){
+          deleteTradeSafely(t).then(()=> renderDashboard());
         }
       });
       card.addEventListener('dragstart', e=>{
@@ -1365,24 +1436,6 @@ function rowToTrade(row){
 
 document.getElementById('importBtn').addEventListener('click', ()=>{
   document.getElementById('importFile').click();
-});
-document.getElementById('clearImportedBtn').addEventListener('click', ()=>{
-  const toRemove = trades.filter(t=>t.imported);
-  if(toRemove.length===0) return;
-  if(confirm(`Remove all ${toRemove.length} imported trades? Trades you made yourself in the app are not affected. This can't be undone.`)){
-    trades = trades.filter(t=>!t.imported);
-    /* Each trade lives in its own 'trade:<id>' document in storage. Just
-       dropping them from the in-memory array and calling persist() only
-       UPSERTS what's still in `trades` — it never deletes the old docs, so
-       they'd silently come back from storage next time the page loads.
-       That ghost-document bug is exactly how 65 imported trades turned into
-       130, then 196, then 262 — every reload resurrected everything that
-       was ever imported, on top of whatever was freshly re-imported. */
-    toRemove.forEach(t=> storageDelete('trade:'+t.id).catch(()=>{}));
-    persist();
-    renderDashboard();
-    document.getElementById('importStatus').textContent = `Removed ${toRemove.length} imported trade${toRemove.length===1?'':'s'}.`;
-  }
 });
 document.getElementById('importFile').addEventListener('change', (e)=>{
   const file = e.target.files[0];
@@ -2826,7 +2879,8 @@ function renderReview(){
   /* stats are computed over the filtered set, so they update live with the filters */
   const rVals = rows.map(t=> parseFloat((t.closeData.rMultiple||'0').replace(',','.'))).filter(n=>!isNaN(n));
   const wins = rows.filter(t=> outcomeOf(t)==='win').length;
-  const winRate = rows.length ? Math.round(100*wins/rows.length) : 0;
+  const lossesN = rows.filter(t=> outcomeOf(t)==='loss').length;   /* win rate ignores breakevens */
+  const winRate = (wins+lossesN) ? Math.round(100*wins/(wins+lossesN)) : 0;
   const totalR = rVals.reduce((a,b)=>a+b,0);
   const avgR = rVals.length ? (totalR/rVals.length) : 0;
 
@@ -2922,10 +2976,8 @@ function renderReview(){
     tr.addEventListener('click', ()=> openJourney(t.id, 'review'));
     tr.querySelector('.rv-delete').addEventListener('click', (e)=>{
       e.stopPropagation();
-      if(confirm('Delete this trade? This can’t be undone.')){
-        trades = trades.filter(x=>x.id!==t.id);
-        storageDelete('trade:'+t.id).catch(()=>{});
-        renderReview();
+      if(confirm('Delete this trade? (It goes to the trash — you can bring it back via “Recover”.)')){
+        deleteTradeSafely(t).then(()=> renderReview());
       }
     });
     tbody.appendChild(tr);
@@ -3024,7 +3076,7 @@ function groupStats(rows, keyFn){
     wins: g.wins,
     losses: g.losses,
     bes: g.bes,
-    winRate: g.count ? Math.round(100*g.wins/g.count) : 0,
+    winRate: (g.wins+g.losses) ? Math.round(100*g.wins/(g.wins+g.losses)) : 0,   /* breakevens are left out */
     totalR: g.totalR,
     avgR: g.count ? g.totalR/g.count : 0,
     totalNet: g.totalNet,
@@ -3492,7 +3544,7 @@ function renderStats(){
   const bes = rVals.filter(x=>x.outcome==='be');
   const totalR = rVals.reduce((a,x)=>a+x.r,0);
   const avgR = rVals.length ? totalR/rVals.length : 0;
-  const winRate = rVals.length ? Math.round(100*wins.length/rVals.length) : 0;
+  const winRate = (wins.length+losses.length) ? Math.round(100*wins.length/(wins.length+losses.length)) : 0;   /* breakevens are left out */
 
   const netVals = rows.map(t=>parseFloat((t.closeData.netPnl||'').replace(',','.'))).filter(n=>!isNaN(n));
   const totalNet = netVals.reduce((a,b)=>a+b,0);
@@ -4039,6 +4091,7 @@ function missedCardEl(m){
 }
 
 document.getElementById('missedNavBtn').addEventListener('click', ()=> openMissed());
+document.getElementById('recoverBtn').addEventListener('click', ()=> openRecover());
 document.getElementById('missedBackBtn').addEventListener('click', backToDashboard);
 
 renderDashboard();
