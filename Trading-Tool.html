@@ -958,7 +958,7 @@ async function writeTradeStrict(t){
     ownVers.add(now);
     await fbDb.runTransaction(async tx=>{
       const snap = await tx.get(ref);
-      if(snap.exists && seen!==undefined && snap.data().updatedAt!==seen){
+      if(snap.exists && seen!==undefined && snap.data().updatedAt!==seen && !ownVers.has(snap.data().updatedAt)){
         const err = new Error('changed on another device'); err.code = 'conflict'; throw err;
       }
       if(!snap.exists && seen!==undefined){
@@ -1053,6 +1053,8 @@ function startLiveSync(){
           const d = ch.doc.data();
           if(ownVers.has(d.updatedAt) || d.updatedAt===remoteVer.get(id)) return;
           if(local && tradeKey(local)!==savedSnap.get(id)) return;   /* unsaved local edits: write guard handles it */
+          /* never swap the trade out from under a text field you're typing in */
+          if(openTradeId===id && document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) return;
           let t = null; try{ t = JSON.parse(d.value); }catch(e){ return; }
           if(!t || !t.id) return;
           applyRemoteTrade(t, d.updatedAt); changed = true;
@@ -1169,7 +1171,16 @@ async function openRecover(){
 }
 
 let persistTimer = null, retryTimer = null;
+let flushing = false, flushQueued = false;
 async function flushTrades(){
+  /* only one save run at a time — a second run started while the first is still waiting for the cloud
+     would race against it (and look like a conflict with ourselves) */
+  if(flushing){ flushQueued = true; return; }
+  flushing = true;
+  try{ await flushTradesOnce(); }
+  finally{ flushing = false; if(flushQueued){ flushQueued = false; flushTrades(); } }
+}
+async function flushTradesOnce(){
   if(!tradesLoaded) return;
   if(persistTimer){ clearTimeout(persistTimer); persistTimer = null; }
   stampAndBackup();
