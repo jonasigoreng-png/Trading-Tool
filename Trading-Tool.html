@@ -715,7 +715,14 @@ const STAGES = ['checking','planned','active','closed'];
 const DASHBOARD_STAGES = ['checking','planned','active'];
 const LOCATION_OPTIONS = ['LHPB','LLPB','LHPB Inverted','LLPB Inverted','Weekly Zone','Daily Zone','0.382','0.5','0.618','EMA12','EMA24','Trendline','Failed Trendline','H&S','Failed H&S','Pattern Failure'];
 const CONFLUENCE_OPTIONS = ['0.618','0.5','0.382','EMA12','EMA24','Daily ATR'];
-const ASSET_LIST = ['BTC','BNB','ETH','SOL','XAU','XAG','AUD','EUR','NQ','S&P','ES','DAX','EUSTX50'];
+const ASSET_LIST = ['BTC','BNB','ETH','SOL','XAU','XAG','AUD/USD','EUR/USD','GBP/USD','NQ','S&P','Dow','DAX','EUSTX50'];
+/* old names → current names (existing trades are renamed on load so the stats stay in one group) */
+const ASSET_RENAMES = { 'AUD':'AUD/USD', 'EUR':'EUR/USD', 'GBP':'GBP/USD', 'ES':'S&P' };
+function migrateAssetNames(list){
+  let n = 0;
+  (list||[]).forEach(x=>{ if(x && ASSET_RENAMES[x.asset]){ x.asset = ASSET_RENAMES[x.asset]; n++; } });
+  return n;
+}
 const PATTERNS_BY_DIR = {
   long: ['Bullish Engulfing','Hammer','SFP','Inside Day Failure','Inside Week Failure','Trendline Fail','Breakout','Level Reclaim','LHPB','LLPB','LHPB (Inverted)','LLPB (Inverted)','Pattern Failure'],
   short: ['Bearish Engulfing','Shooting Star','SFP','Inside Day Failure','Inside Week Failure','Trendline Fail','Breakdown','Level Rejection','LHPB','LLPB','LHPB (Inverted)','LLPB (Inverted)','Pattern Failure']
@@ -793,7 +800,8 @@ async function loadTrades(){
   const merged = mergeLocalBackups();
   const repaired = repairRegressedImportedStages();
   const deduped = dedupeImportedTrades();
-  if(repaired>0 || merged>0) persist();
+  const renamed = migrateAssetNames(trades);
+  if(repaired>0 || merged>0 || renamed>0) persist();
   tradesLoaded = true;
   showLoadProblem(cloudLoadFailed ? 'The cloud could not be read completely — some trades may be missing. Reload to try again.' : null);
   renderDashboard();
@@ -983,6 +991,7 @@ function liteBackup(t){
 }
 /* put a trade that came from the cloud into memory without marking it as a local edit */
 function applyRemoteTrade(t, ver){
+  migrateAssetNames([t]);
   const i = trades.findIndex(x=>x.id===t.id);
   if(i>-1) trades[i] = t; else trades.unshift(t);
   const k = tradeKey(t);
@@ -1283,7 +1292,7 @@ function renderDashboard(){
 
 document.getElementById('newTradeBtn').addEventListener('click', ()=>{
   const t = {
-    id:uid(), asset:'EUR', dir:'long', patterns:['Bullish Engulfing'], bias:null, stage:'checking', createdAt:Date.now(),
+    id:uid(), asset:'EUR/USD', dir:'long', patterns:['Bullish Engulfing'], bias:null, stage:'checking', createdAt:Date.now(),
     check:{ where:'', whereTags:[], whereExtra:'', confluence:'none', confluenceTags:[], valid:null, extreme:null, candleOk:null, candleNote:'', levelRating:null, levelNote:'',
              context:null, contextNote:'', trouble:'', biasOk:null, entryLevel:'', mindset:null, mindsetNote:'' },
     plan:{ entry:'', stop:'', target:'', ftas:[] },
@@ -1320,7 +1329,7 @@ function shortSymbol(sym){
   if(!sym) return '';
   let s = String(sym).trim().toUpperCase();
   if(s.endsWith('USD') && s.length>3) s = s.slice(0,-3);
-  return s;
+  return ASSET_RENAMES[s] || s;
 }
 
 function fmtRMultiple(v){
@@ -3889,9 +3898,10 @@ async function loadMissed(){
       else if((loc.updatedAt||0) > (remote.updatedAt||0)){ loaded[loaded.indexOf(remote)] = loc; byId.set(loc.id, loc); restored++; }
     }
   }catch(e){ /* ignore */ }
+  const renamedM = migrateAssetNames(loaded);
   missedEntries = loaded;
   missedLoaded = true;
-  if(restored) persistMissed();
+  if(restored || renamedM) persistMissed();
   if(document.getElementById('missedView').classList.contains('active')) renderMissed();
 }
 
