@@ -2171,6 +2171,11 @@ function renderPlanStage(t){
   trigWrap.appendChild(trigRow);
   const sel = TRIGGERS.find(o=>o.v===t.plan.entryPA);
   if(sel && sel.hint) trigWrap.appendChild(Object.assign(document.createElement('div'),{className:'panel-sub',style:'margin-top:10px;',textContent:sel.hint}));
+  /* free-text detail for the entry trigger */
+  const trigNote = document.createElement('input'); trigNote.type='text'; trigNote.style.marginTop='12px';
+  trigNote.placeholder='Extra detail on the entry trigger (optional)'; trigNote.value = t.plan.entryNote || '';
+  trigNote.addEventListener('input', ()=>{ t.plan.entryNote = trigNote.value; persist(); });
+  trigWrap.appendChild(trigNote);
   panel.appendChild(trigWrap);
   outer.appendChild(panel);
 
@@ -2669,7 +2674,7 @@ function renderJournalStage(t){
     <div class="jd-row"><div class="jd-label">Entry (Plan)</div><div class="jd-value">${escapeHtml(t.plan.entry||'—')}</div></div>
     <div class="jd-row"><div class="jd-label">Stop (Plan)</div><div class="jd-value">${escapeHtml(t.plan.stop||'—')}</div></div>
     <div class="jd-row"><div class="jd-label">Target (Plan)</div><div class="jd-value">${escapeHtml(t.plan.target||'—')}</div></div>
-    <div class="jd-row"><div class="jd-label">Entry trigger</div><div class="jd-value">${escapeHtml(t.plan.entryPA||'—')}</div></div>
+    <div class="jd-row"><div class="jd-label">Entry trigger</div><div class="jd-value">${escapeHtml(t.plan.entryPA||'—')}${t.plan.entryNote?' — '+escapeHtml(t.plan.entryNote):''}</div></div>
     <div class="jd-row"><div class="jd-label">Mindset going in</div><div class="jd-value">${escapeHtml(t.check.mindset||'—')}</div></div>
   `;
   recapPanel.appendChild(recap);
@@ -3029,6 +3034,7 @@ function exportJournalToExcel(rows){
     'Fees': t.closeData.fees || '',
     'Net PNL': t.closeData.netPnl || '',
     'Entry Trigger': t.plan.entryPA || '',
+    'Entry Trigger Note': t.plan.entryNote || '',
     'Mgmt Actions': t.mgmtLog.length,
     'Mgmt Detail': t.mgmtLog.map(mgmtSummary).join('  ||  '),
     'Evaluation': t.journal.evalNote || ''
@@ -3928,7 +3934,7 @@ async function markTradeMissed(t){
     asset:t.asset, dir:t.dir, bias:t.bias||null,
     patterns:(patternsOf(t)||[]).slice(),
     where:((t.check && t.check.whereTags) || []).slice(),
-    plan:{ entry:t.plan.entry||'', stop:t.plan.stop||'', target:t.plan.target||'', entryPA:t.plan.entryPA||'' },
+    plan:{ entry:t.plan.entry||'', stop:t.plan.stop||'', target:t.plan.target||'', entryPA:t.plan.entryPA||'', entryNote:t.plan.entryNote||'' },
     reason:null, reasonNote:'', outcome:null, potentialR:'', eval:{ verdict:null, note:'' }
   };
   m.updatedAt = Date.now();
@@ -4036,7 +4042,7 @@ function missedCardEl(m){
     <div class="jd-row"><div class="jd-label">Entry</div><div class="jd-value">${escapeHtml(m.plan.entry||'—')}</div></div>
     <div class="jd-row"><div class="jd-label">Stop</div><div class="jd-value">${escapeHtml(m.plan.stop||'—')}</div></div>
     <div class="jd-row"><div class="jd-label">Target</div><div class="jd-value">${escapeHtml(m.plan.target||'—')}</div></div>
-    <div class="jd-row"><div class="jd-label">Entry trigger</div><div class="jd-value">${escapeHtml(m.plan.entryPA||'—')}</div></div>`;
+    <div class="jd-row"><div class="jd-label">Entry trigger</div><div class="jd-value">${escapeHtml(m.plan.entryPA||'—')}${m.plan.entryNote?' — '+escapeHtml(m.plan.entryNote):''}</div></div>`;
   body.appendChild(plan);
 
   /* why */
