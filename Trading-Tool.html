@@ -1949,10 +1949,15 @@ function renderCheckStage(t){
   });
   b.appendChild(emaRow);
 
-  b = qBlock('Anything working against this — news, conflicting levels/candles, or mixed signals?', [
+  /* the old separate "on the way to your target" note is merged into this block — keep any note already written */
+  if(c.trouble){ c.contextNote = c.contextNote ? (c.contextNote+' / '+c.trouble) : c.trouble; c.trouble = ''; persist(); }
+  b = qBlock('Anything working against this — news, conflicting levels/candles, trouble on the way to your target, or mixed signals?', [
     'News events checked',
     'No opposing Hammer/Engulfing on Daily or Weekly',
-    'Daily bias and 1h bias agree — not mixed'
+    'Daily bias and 1h bias agree — not mixed',
+    'Trouble levels before target marked',
+    'Developing 1h S/R near entry',
+    'Price not already sitting on entry or target'
   ]);
   const row4 = document.createElement('div');
   choiceRow(row4, [{v:'clear',label:'Clear'},{v:'conflict',label:'Something’s off'}], c.context, v=>{ c.context=v; persist(); }, true);
@@ -1960,15 +1965,6 @@ function renderCheckStage(t){
   const note3 = document.createElement('input'); note3.type='text'; note3.placeholder='If something’s off, what?'; note3.style.marginTop='16px'; note3.value=c.contextNote;
   note3.addEventListener('input', ()=>{ c.contextNote=note3.value; persist(); });
   b.appendChild(note3);
-
-  b = qBlock('Anything on the way to your target worth flagging?', [
-    'Trouble levels before target marked',
-    'Developing 1h S/R near entry',
-    'Price not already sitting on entry or target'
-  ]);
-  const note4 = document.createElement('input'); note4.type='text'; note4.placeholder='Short note...'; note4.value=c.trouble;
-  note4.addEventListener('input', ()=>{ c.trouble=note4.value; persist(); });
-  b.appendChild(note4);
 
   b = qBlock('Does your planned entry still go with your bias (daily + 1h)?');
   const row5 = document.createElement('div');
