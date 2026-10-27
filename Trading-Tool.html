@@ -3467,6 +3467,50 @@ function fmtPct(n){ return n.toFixed(2) + '%'; }
 
 /* Details behind the "% of stop used" tile: average / highest / lowest, winners vs
    losers, and a per-asset breakdown. */
+/* Click-through detail for one metric (avg winner R, avg loser duration, …):
+   average / best / worst plus the same numbers per asset and per setup. */
+function buildMetricDetail(title, items, fmt, labels, emptyText){
+  const wrap = document.createElement('div'); wrap.className='panel'; wrap.style.marginTop='10px';
+  wrap.innerHTML = '<div class="panel-label">'+escapeHtml(title)+' — details</div>';
+  if(!items.length){
+    wrap.appendChild(Object.assign(document.createElement('div'),{style:'color:var(--ink-faint);font-size:12.5px;',textContent:emptyText||'Not enough data yet.'}));
+    return wrap;
+  }
+  const stats = arr=>{
+    if(!arr.length) return null;
+    const hi = arr.reduce((m,x)=>x.v>m.v?x:m, arr[0]);
+    const lo = arr.reduce((m,x)=>x.v<m.v?x:m, arr[0]);
+    return { n:arr.length, avg: arr.reduce((a,x)=>a+x.v,0)/arr.length, hi, lo };
+  };
+  const all = stats(items);
+  const dt = x=> escapeHtml(x.t.asset)+' '+escapeHtml(fmtDateTime(x.t.closeData.closedAtMs)||'');
+  const tiles = document.createElement('div'); tiles.className='stat-row';
+  tiles.innerHTML = `
+    <div class="stat-tile"><div class="k">Average</div><div class="v">${fmt(all.avg)}</div><div class="sub-hint">${all.n} trade${all.n===1?'':'s'}</div></div>
+    <div class="stat-tile clickable" data-open="${all.hi.t.id}"><div class="k">${labels[0]}</div><div class="v">${fmt(all.hi.v)}</div><div class="sub-hint">${dt(all.hi)}</div></div>
+    <div class="stat-tile clickable" data-open="${all.lo.t.id}"><div class="k">${labels[1]}</div><div class="v">${fmt(all.lo.v)}</div><div class="sub-hint">${dt(all.lo)}</div></div>`;
+  tiles.querySelectorAll('[data-open]').forEach(el=> el.addEventListener('click', ()=> openJourney(el.dataset.open, 'stats')));
+  wrap.appendChild(tiles);
+  const mk = (heading, groups)=>{
+    const tw = document.createElement('div'); tw.className='table-wrap'; tw.style.marginTop='14px';
+    const table = document.createElement('table'); table.className='rv-table';
+    table.innerHTML = `<thead><tr><th>${heading}</th><th style="text-align:right;">Trades</th><th style="text-align:right;">Avg</th><th style="text-align:right;">${labels[0]}</th><th style="text-align:right;">${labels[1]}</th></tr></thead>`;
+    const tb = document.createElement('tbody');
+    groups.forEach(([label, arr])=>{
+      const st = stats(arr); if(!st) return;
+      const tr = document.createElement('tr'); tr.style.cursor='default';
+      tr.innerHTML = `<td>${escapeHtml(label)}</td><td style="text-align:right;">${st.n}</td><td style="text-align:right;">${fmt(st.avg)}</td><td style="text-align:right;">${fmt(st.hi.v)}</td><td style="text-align:right;">${fmt(st.lo.v)}</td>`;
+      tb.appendChild(tr);
+    });
+    table.appendChild(tb); tw.appendChild(table); return tw;
+  };
+  const assets = [...new Set(items.map(x=>x.t.asset))].sort();
+  wrap.appendChild(mk('Asset', assets.map(a=>[a, items.filter(x=>x.t.asset===a)])));
+  const setups = [...new Set(items.flatMap(x=>patternsOf(x.t)))].sort();
+  if(setups.length) wrap.appendChild(mk('Setup', setups.map(a=>[a, items.filter(x=>patternsOf(x.t).includes(a))])));
+  return wrap;
+}
+
 function buildStopDetail(items){
   const wrap = document.createElement('div'); wrap.className='panel'; wrap.style.marginTop='10px';
   wrap.innerHTML = '<div class="panel-label">% of Stop Used — details</div>';
@@ -3609,14 +3653,11 @@ function renderStats(){
 
   /* % of stop used — "40%", "40" and "0,11" are all read as percent values (0,11 = 0.11%). */
   const stopPctOf = x => stopPctValue(x.t);
-  const stopUsedWin = wins.map(stopPctOf).filter(n=>!isNaN(n));
-  const avgStopWin = stopUsedWin.length ? stopUsedWin.reduce((a,b)=>a+b,0)/stopUsedWin.length : null;
   const stopAll = rVals.map(x=>({ t:x.t, v:stopPctValue(x.t), outcome:x.outcome })).filter(x=>!isNaN(x.v));
   const avgStopAll = stopAll.length ? stopAll.reduce((a,x)=>a+x.v,0)/stopAll.length : null;
 
   const feesVals = rows.map(t=>parseFloat(String(t.closeData.fees||'').replace(',','.'))).filter(n=>!isNaN(n));
   const avgFees = feesVals.length ? feesVals.reduce((a,b)=>a+b,0)/feesVals.length : null;
-  const avgMgmt = rows.reduce((a,t)=>a+t.mgmtLog.length,0)/rows.length;
 
   const row1 = document.createElement('div'); row1.className='stat-row';
   row1.innerHTML = `
@@ -3644,19 +3685,44 @@ function renderStats(){
   `;
   container.appendChild(row2);
 
-  const row3 = document.createElement('div'); row3.className='stat-row'; row3.style.marginTop='10px';
-  row3.innerHTML = `
-    <div class="stat-tile"><div class="k">Avg Winner Duration</div><div class="v">${fmtDuration(avgWinDurationMs)}</div></div>
-    <div class="stat-tile"><div class="k">Avg Loser Duration</div><div class="v">${fmtDuration(avgLossDurationMs)}</div></div>
-    <div class="stat-tile"><div class="k">Avg Mgmt Actions / Trade</div><div class="v">${avgMgmt.toFixed(1)}</div></div>
-    <div class="stat-tile"><div class="k">Avg Fees / Trade</div><div class="v">${avgFees!=null ? avgFees.toFixed(2) : '—'}</div></div>
-  `;
-  container.appendChild(row3);
+  /* Avg winner / loser R and their durations — click a tile for average, best/worst, per asset and per setup */
+  const fmtRv = v=> (v>=0?'+':'')+v.toFixed(2)+'R';
+  const avgOf = arr=> arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
+  const winRItems = wins.map(x=>({ t:x.t, v:x.r }));
+  const lossRItems = losses.map(x=>({ t:x.t, v:x.r }));
+  const winDurItems = wins.map(x=>({ t:x.t, v:durationOf(x.t) })).filter(x=>x.v!=null);
+  const lossDurItems = losses.map(x=>({ t:x.t, v:durationOf(x.t) })).filter(x=>x.v!=null);
+  const avgWinR = avgOf(winRItems.map(x=>x.v)), avgLossR = avgOf(lossRItems.map(x=>x.v));
+  const metricTile = (id, label, valueHtml)=> `<div class="stat-tile clickable" data-metric="${id}"><div class="k">${label} <span class="sub-hint">click for details</span></div><div class="v">${valueHtml}</div></div>`;
+  const rowM = document.createElement('div'); rowM.className='stat-row'; rowM.style.marginTop='10px';
+  rowM.innerHTML =
+    metricTile('winR', 'Avg Winner R', avgWinR!=null ? '<span class="pos">'+fmtRv(avgWinR)+'</span>' : '—') +
+    metricTile('lossR', 'Avg Loser R', avgLossR!=null ? '<span class="neg">'+fmtRv(avgLossR)+'</span>' : '—') +
+    metricTile('winDur', 'Avg Winner Duration', fmtDuration(avgWinDurationMs)) +
+    metricTile('lossDur', 'Avg Loser Duration', fmtDuration(avgLossDurationMs));
+  container.appendChild(rowM);
+  const metricDetails = {
+    winR:    buildMetricDetail('Winner R', winRItems, fmtRv, ['Best','Smallest'], 'No winners in this period yet.'),
+    lossR:   buildMetricDetail('Loser R', lossRItems, fmtRv, ['Smallest loss','Largest loss'], 'No losers in this period yet.'),
+    winDur:  buildMetricDetail('Winner duration', winDurItems, fmtDuration, ['Longest','Shortest'], 'No winners with entry and exit time yet.'),
+    lossDur: buildMetricDetail('Loser duration', lossDurItems, fmtDuration, ['Longest','Shortest'], 'No losers with entry and exit time yet.')
+  };
+  const metricHolder = document.createElement('div');
+  Object.values(metricDetails).forEach(d=>{ d.style.display='none'; metricHolder.appendChild(d); });
+  container.appendChild(metricHolder);
+  rowM.querySelectorAll('[data-metric]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const d = metricDetails[el.dataset.metric];
+      const wasOpen = d.style.display!=='none';
+      Object.values(metricDetails).forEach(x=> x.style.display='none');
+      if(!wasOpen) d.style.display='block';
+    });
+  });
 
   const row4 = document.createElement('div'); row4.className='stat-row'; row4.style.marginTop='10px';
   row4.innerHTML = `
     <div class="stat-tile clickable" id="stopTile"><div class="k">Avg % of Stop Used <span class="sub-hint">click for details</span></div><div class="v">${avgStopAll!=null ? fmtPct(avgStopAll) : '—'}</div></div>
-    <div class="stat-tile"><div class="k">Avg % Stop Used (Winners)</div><div class="v">${avgStopWin!=null ? fmtPct(avgStopWin) : '—'}</div></div>
+    <div class="stat-tile"><div class="k">Avg Fees / Trade</div><div class="v">${avgFees!=null ? avgFees.toFixed(2) : '—'}</div></div>
   `;
   container.appendChild(row4);
   const stopDetail = buildStopDetail(stopAll);
@@ -3677,9 +3743,8 @@ function renderStats(){
   }
   /* a "winner" must actually be in profit and a "loser" actually in loss — otherwise show a dash */
   const bestTrade = [...rVals].filter(x=>x.r>0).sort((a,b)=>b.r-a.r)[0] || null;
-  const worstTrade = [...rVals].filter(x=>x.r<0).sort((a,b)=>a.r-b.r)[0] || null;
   const row5 = document.createElement('div'); row5.className='stat-row'; row5.style.marginTop='10px';
-  row5.innerHTML = tradeTile('Biggest Winner', bestTrade) + tradeTile('Biggest Loser', worstTrade);
+  row5.innerHTML = tradeTile('Biggest Winner', bestTrade);
   container.appendChild(row5);
   row5.querySelectorAll('[data-trade-id]').forEach(el=>{
     el.addEventListener('click', ()=> openJourney(el.dataset.tradeId, 'stats'));
@@ -3743,10 +3808,6 @@ function renderStats(){
   }
   ovExtras.push(highlightTile('Best Direction', pickExtreme(byDir, 1, false), 'direction'));
   ovExtras.push(highlightTile('Worst Direction', pickExtreme(byDir, 1, true), 'direction'));
-  if(byLocation.length){
-    ovExtras.push(highlightTile('Top Location', pickExtreme(byLocation, 2, false), 'location'));
-    ovExtras.push(highlightTile('Lowest Location', pickExtreme(byLocation, 2, true), 'location'));
-  }
   for(let i=0;i<ovExtras.length;i+=4){
     const r = document.createElement('div'); r.className='stat-row'; r.style.marginTop='10px';
     r.innerHTML = ovExtras.slice(i,i+4).join('');
