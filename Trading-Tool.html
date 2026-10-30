@@ -716,7 +716,7 @@ const STAGES = ['checking','planned','active','closed'];
 const DASHBOARD_STAGES = ['checking','planned','active'];
 const LOCATION_OPTIONS = ['LHPB','LLPB','LHPB Inverted','LLPB Inverted','Weekly Zone','Daily Zone','0.382','0.5','0.618','EMA12','EMA24','Trendline','Failed Trendline','H&S','Failed H&S','Pattern Failure'];
 const CONFLUENCE_OPTIONS = ['0.618','0.5','0.382','EMA12','EMA24','Daily ATR'];
-const ASSET_LIST = ['BTC','BNB','ETH','SOL','XAU','XAG','AUD/USD','EUR/USD','GBP/USD','GBP/AUD','NQ','S&P','Dow','DAX','EUSTX50'];
+const ASSET_LIST = ['BTC','BNB','ETH','SOL','XAU','XAG','AUD/USD','EUR/USD','EUR/JPY','GBP/USD','GBP/AUD','NQ','S&P','Dow','DAX','EUSTX50'];
 /* old names → current names (existing trades are renamed on load so the stats stay in one group) */
 const ASSET_RENAMES = { 'AUD':'AUD/USD', 'EUR':'EUR/USD', 'GBP':'GBP/USD', 'ES':'S&P' };
 function migrateAssetNames(list){
@@ -2029,6 +2029,12 @@ function renderCheckStage(t){
     persist(); renderJourney();
   });
   actions.appendChild(resetBtn);
+  if(stageIndex(t.stage) < stageIndex('active')){
+    const missCheckBtn = document.createElement('button'); missCheckBtn.className='btn'; missCheckBtn.textContent='Missed Entry';
+    if(canMarkMissed(t)){ missCheckBtn.addEventListener('click', ()=> markTradeMissed(t)); }
+    else{ missCheckBtn.disabled = true; missCheckBtn.style.opacity = '.45'; missCheckBtn.title = 'Pick a bias first'; }
+    actions.appendChild(missCheckBtn);
+  }
   const planBtn = document.createElement('button');
   planBtn.className = 'btn primary';
   planBtn.textContent = 'Make the Plan →';
@@ -2268,14 +2274,9 @@ function renderPlanStage(t){
   if(canMarkMissed(t)){
     missBtn.addEventListener('click', ()=> markTradeMissed(t));
   }else{
-    missBtn.disabled = true; missBtn.style.opacity = '.45'; missBtn.title = 'Fill in entry, stop and target first';
+    missBtn.disabled = true; missBtn.style.opacity = '.45'; missBtn.title = 'Not available for this trade';
   }
   actions.appendChild(missBtn);
-  if(!canMarkMissed(t)){
-    outer.appendChild(actions);
-    outer.appendChild(Object.assign(document.createElement('div'),{className:'panel-sub',style:'margin-top:8px;',textContent:'“Missed Entry” unlocks once entry, stop and target are filled in.'}));
-    return outer;
-  }
   outer.appendChild(actions);
   return outer;
 }
@@ -3992,7 +3993,8 @@ async function loadMissed(){
 
 /* called from the Plan stage */
 function canMarkMissed(t){
-  return !!(String(t.plan.entry||'').trim() && String(t.plan.stop||'').trim() && String(t.plan.target||'').trim());
+  /* possible for any trade that hasn't been entered yet, as soon as the checks have been started (bias picked) or it reached the Plan stage */
+  return stageIndex(t.stage) < stageIndex('active') && !!(t.bias || t.stage==='planned');
 }
 async function markTradeMissed(t){
   if(!missedLoaded){ alert('Still loading your data — try again in a moment.'); return; }
@@ -4002,7 +4004,7 @@ async function markTradeMissed(t){
     asset:t.asset, dir:t.dir, bias:t.bias||null,
     patterns:(patternsOf(t)||[]).slice(),
     where:((t.check && t.check.whereTags) || []).slice(),
-    plan:{ entry:t.plan.entry||'', stop:t.plan.stop||'', target:t.plan.target||'', entryPA:t.plan.entryPA||'', entryNote:t.plan.entryNote||'' },
+    plan:{ entry:t.plan.entry||(t.check&&t.check.entryLevel)||'', stop:t.plan.stop||'', target:t.plan.target||'', entryPA:t.plan.entryPA||'', entryNote:t.plan.entryNote||'' },
     reason:null, reasonNote:'', outcome:null, potentialR:'', eval:{ verdict:null, note:'' }
   };
   m.updatedAt = Date.now();
@@ -4042,7 +4044,7 @@ function renderMissed(){
     return;
   }
   if(!missedEntries.length){
-    c.innerHTML = '<div class="panel" style="text-align:center;color:var(--ink-faint);font-size:13px;line-height:1.6;">No missed entries yet.<br>In a trade’s Plan stage — once entry, stop and target are filled in — use “Missed Entry”.</div>';
+    c.innerHTML = '<div class="panel" style="text-align:center;color:var(--ink-faint);font-size:13px;line-height:1.6;">No missed entries yet.<br>Use “Missed Entry” in a trade’s Check or Plan stage (before you’ve entered).</div>';
     return;
   }
   const rOf = m=> missedNum(m.potentialR);
