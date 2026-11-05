@@ -716,7 +716,7 @@ const STAGES = ['checking','planned','active','closed'];
 const DASHBOARD_STAGES = ['checking','planned','active'];
 const LOCATION_OPTIONS = ['LHPB','LLPB','LHPB Inverted','LLPB Inverted','Weekly Zone','Daily Zone','0.382','0.5','0.618','EMA12','EMA24','Trendline','Failed Trendline','H&S','Failed H&S','Pattern Failure'];
 const CONFLUENCE_OPTIONS = ['0.618','0.5','0.382','EMA12','EMA24','Daily ATR'];
-const ASSET_LIST = ['BTC','BNB','ETH','SOL','XAU','XAG','AUD/USD','EUR/USD','EUR/JPY','GBP/USD','GBP/AUD','NQ','S&P','Dow','DAX','EUSTX50'];
+const ASSET_LIST = ['BTC','BNB','ETH','SOL','XAU','XAG','AUD/USD','EUR/USD','EUR/JPY','GBP/USD','GBP/AUD','USD/JPY','NQ','S&P','Dow','DAX','EUSTX50','US Oil'];
 /* old names → current names (existing trades are renamed on load so the stats stay in one group) */
 const ASSET_RENAMES = { 'AUD':'AUD/USD', 'EUR':'EUR/USD', 'GBP':'GBP/USD', 'ES':'S&P' };
 function migrateAssetNames(list){
@@ -806,6 +806,7 @@ async function loadTrades(){
   tradesLoaded = true;
   showLoadProblem(cloudLoadFailed ? 'The cloud could not be read completely — some trades may be missing. Reload to try again.' : null);
   renderDashboard();
+  scheduleMt5Sync();   /* tell the PlanGuard EA which assets are planned */
 }
 
 /* Self-healing safety net #2: an imported trade is only ever CREATED as
@@ -1107,6 +1108,7 @@ async function deleteTradeSafely(t){
   trades = trades.filter(x=>x.id!==t.id);
   savedSnap.delete(t.id); stampedKey.delete(t.id); remoteVer.delete(t.id);
   storageDelete('trade:'+t.id).catch(()=>{});
+  scheduleMt5Sync();   /* a deleted plan no longer allows trading that asset */
 }
 
 async function openRecover(){
@@ -1211,9 +1213,73 @@ async function flushTradesOnce(){
 function persist(){
   if(persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(flushTrades, 400);
+  scheduleMt5Sync();
 }
 window.addEventListener('pagehide', ()=>{ stampAndBackup(); flushTrades(); });
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden'){ stampAndBackup(); flushTrades(); } });
+/* coming back to the tool (e.g. next morning on the phone) renews today's approvals */
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') scheduleMt5Sync(); });
+
+/* ---------------------------------------------------------------------
+   MT5 PlanGuard sync — tells the PlanGuard EA in MetaTrader which assets
+   have a plan. An asset counts as "planned" while one of its trades sits
+   in the Plan or Active stage. Each asset has one document in the
+   'mt5_approvals' collection:
+     { active: true/false, expiresAt: <unix seconds, end of today> }
+   The EA closes any MT5 trade on an asset whose document isn't active.
+   Plans expire at midnight, so every day starts from a clean slate until
+   you open the tool again.
+--------------------------------------------------------------------- */
+const MT5_IDS = {
+  'BTC':'BTC', 'BNB':'BNB', 'ETH':'ETH', 'SOL':'SOL', 'XAU':'XAU', 'XAG':'XAG',
+  'AUD/USD':'AUDUSD', 'EUR/USD':'EURUSD', 'EUR/JPY':'EURJPY', 'GBP/USD':'GBPUSD', 'GBP/AUD':'GBPAUD', 'USD/JPY':'USDJPY',
+  'NQ':'NQ', 'S&P':'SPX', 'Dow':'DOW', 'DAX':'DAX', 'EUSTX50':'EUSTX50', 'US Oil':'USOIL'
+};
+function mt5IdOf(asset){
+  if(!asset) return null;
+  return MT5_IDS[asset] || String(asset).toUpperCase().replace(/[^A-Z0-9]/g,'');
+}
+const mt5LastSent = {};   /* id -> what Firestore holds, as far as this session knows */
+let mt5Timer = null;
+function scheduleMt5Sync(){
+  if(mt5Timer) clearTimeout(mt5Timer);
+  mt5Timer = setTimeout(()=>{ syncMt5Approvals().catch(e=> console.warn('PlanGuard sync failed:', e)); }, 1000);
+}
+async function syncMt5Approvals(){
+  if(!tradesLoaded) return;
+  if(!(await hasFirestore())) return;
+
+  /* which assets have a trade in Plan or Active right now */
+  const planned = new Set();
+  trades.forEach(t=>{
+    if(t && (t.stage==='planned' || t.stage==='active')){
+      const id = mt5IdOf(t.asset);
+      if(id) planned.add(id);
+    }
+  });
+
+  const endOfDay = new Date(); endOfDay.setHours(23,59,59,0);
+  const expiresAt = Math.floor(endOfDay.getTime()/1000);
+  const today = endOfDay.toDateString();
+
+  const allIds = new Set(ASSET_LIST.map(mt5IdOf).filter(Boolean));
+  planned.forEach(id=> allIds.add(id));
+
+  const writes = [];
+  allIds.forEach(id=>{
+    const want = planned.has(id) ? 'on:'+today : 'off';
+    if(mt5LastSent[id] === want) return;   /* already up to date, nothing to write */
+    const data = planned.has(id)
+      ? { active:true,  expiresAt:expiresAt, updatedAt:Date.now() }
+      : { active:false, expiresAt:0,         updatedAt:Date.now() };
+    writes.push(
+      fbDb.collection('mt5_approvals').doc(id).set(data)
+        .then(()=>{ mt5LastSent[id] = want; })
+        .catch(e=> console.warn('PlanGuard sync failed for '+id+':', e))
+    );
+  });
+  await Promise.all(writes);
+}
 
 let openTradeId = null;
 let openStage = null;
@@ -4020,6 +4086,7 @@ async function markTradeMissed(t){
   trades = trades.filter(x=>x.id!==t.id);
   savedSnap.delete(t.id); stampedKey.delete(t.id);
   storageDelete('trade:'+t.id).catch(()=>{});
+  scheduleMt5Sync();   /* a missed entry no longer allows trading that asset */
   missedOpenIds.add(m.id);
   openMissed(m.id);
 }
