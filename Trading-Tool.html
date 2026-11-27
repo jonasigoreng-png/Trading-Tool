@@ -1801,6 +1801,7 @@ function renderCheckStage(t){
   if(c.targetTF) sumParts.push(({bias:'Target: bias TF',h1:'Target: H1',preempt:'Pre-empting'+((c.preemptTags&&c.preemptTags.length)?' '+c.preemptTags.join('/'):'')})[c.targetTF]);
   if(c.levelRating) sumParts.push('Grade '+c.levelRating);
   if(c.naked) sumParts.push(c.naked==='yes'?'naked ✓':'not naked');
+  if(c.entryMode) sumParts.push(c.entryMode==='pa'?'enter on PA':'limit order');
   wrap.appendChild(Object.assign(document.createElement('div'),{className:'section-div',textContent: noBias ? 'Grade the H1 Level' : 'Grade the Level'}));
   collSection('playbook', 'Level & Target', sumParts.join(' · ') || 'click to open', body=>{
     /* 1 — target timeframe (only asked without a bias; with a Weekly/Daily bias the target follows it) */
@@ -1841,6 +1842,15 @@ function renderCheckStage(t){
       c.entryLevel = lvl.value; persist();
     });
     b2.appendChild(lvl);
+
+    /* how the entry will be taken — carried into the Plan as the preselected entry trigger */
+    const emWrap = document.createElement('div'); emWrap.style.marginTop='16px';
+    emWrap.appendChild(Object.assign(document.createElement('div'),{className:'sub-label',textContent:'How do you plan to enter?'}));
+    choiceRow(emWrap, [{v:'limit',label:'Limit order'},{v:'pa',label:'Price action'}], c.entryMode, v=>{ c.entryMode=v; persist(); }, false);
+    if(c.entryMode==='pa'){
+      emWrap.appendChild(Object.assign(document.createElement('div'),{className:'panel-sub',style:'margin-top:10px;',textContent:'You get a short double check in the Plan before you jump in.'}));
+    }
+    b2.appendChild(emWrap);
 
     /* 2 — look left */
     b2 = qBlock('Look left on the chart. Is the market…', null, body);
@@ -1916,7 +1926,7 @@ function renderCheckStage(t){
     if(c.naked==='no'){
       const g = document.createElement('div'); g.style.marginTop='12px';
       g.appendChild(Object.assign(document.createElement('div'),{textContent:'No naked level — what now?',className:'sub-label'}));
-      choiceRow(g, [{v:'find',label:'Find a naked level in that zone'},{v:'wait',label:'Wait for price action as price approaches'}], c.noNakedPlan, v=>{ c.noNakedPlan=v; persist(); }, false);
+      choiceRow(g, [{v:'find',label:'Find a naked level in that zone'},{v:'wait',label:'Wait for price action as price approaches'}], c.noNakedPlan, v=>{ c.noNakedPlan=v; if(v==='wait' && !c.entryMode) c.entryMode='pa'; persist(); }, false);
       b2.appendChild(g);
     }
 
@@ -2185,6 +2195,11 @@ function renderPlanStage(t){
   /* map values saved by the earlier direction-neutral version */
   if(t.plan.entryPA==='Hammer / Shooting Star + Thrust') t.plan.entryPA = TRIGGERS[0].v;
   if(t.plan.entryPA==='Bullish / Bearish Engulfing') t.plan.entryPA = TRIGGERS[1].v;
+  /* preselect from the Check's "How do you plan to enter?" — once, so a later deselect sticks */
+  if(!t.plan.entryPASeeded){
+    t.plan.entryPASeeded = true;
+    if(!t.plan.entryPA && t.check && t.check.entryMode==='limit'){ t.plan.entryPA = 'Limit order at level'; persist(); }
+  }
   const trigRow = document.createElement('div'); trigRow.className='opt-row';
   TRIGGERS.forEach(o=>{
     const chip = document.createElement('div');
@@ -2202,6 +2217,36 @@ function renderPlanStage(t){
   trigNote.addEventListener('input', ()=>{ t.plan.entryNote = trigNote.value; persist(); });
   trigWrap.appendChild(trigNote);
   panel.appendChild(trigWrap);
+
+  /* Price-action double check — only when the entry is price action, not a resting limit order */
+  const LIMIT_V = 'Limit order at level';
+  const isPA = t.plan.entryPA ? t.plan.entryPA!==LIMIT_V : (t.check && t.check.entryMode==='pa');
+  if(isPA){
+    if(!Array.isArray(t.plan.paChecks)) t.plan.paChecks = [];
+    const PA_ITEMS = [
+      { k:'size',  label:'Candle is big enough compared to the ones before' },
+      { k:'run',   label: isLongT ? 'Not running straight into an H1 resistance that holds' : 'Not running straight into an H1 support that holds' },
+      { k:'early', label:'This is really the picture I wanted — not jumping in early' }
+    ];
+    const paWrap = document.createElement('div'); paWrap.style.cssText='margin-top:20px;padding-top:20px;border-top:1px solid var(--line-soft);';
+    paWrap.appendChild(Object.assign(document.createElement('div'),{className:'sub-label',textContent:'Price action double check — is it really valid?'}));
+    const paRow = document.createElement('div'); paRow.className='opt-row';
+    PA_ITEMS.forEach(it=>{
+      const chip = document.createElement('div');
+      chip.className = 'opt' + (t.plan.paChecks.includes(it.k) ? ' selected' : '');
+      chip.textContent = it.label;
+      chip.addEventListener('click', ()=>{
+        const i = t.plan.paChecks.indexOf(it.k);
+        if(i>-1) t.plan.paChecks.splice(i,1); else t.plan.paChecks.push(it.k);
+        persist(); renderJourney();
+      });
+      paRow.appendChild(chip);
+    });
+    paWrap.appendChild(paRow);
+    const okAll = PA_ITEMS.every(it=>t.plan.paChecks.includes(it.k));
+    paWrap.appendChild(Object.assign(document.createElement('div'),{className:'panel-sub',style:'margin-top:10px;color:'+(okAll?'var(--go)':'var(--wait)')+';',textContent: okAll ? 'All confirmed — valid price action ✓' : 'Not all confirmed → wait, don’t jump in yet.'}));
+    panel.appendChild(paWrap);
+  }
   outer.appendChild(panel);
 
   const FTA_ACTIONS = ['Move Stop','Add','Further Evaluation','2nd Chance Entry'];
@@ -2695,6 +2740,7 @@ function renderJournalStage(t){
     <div class="jd-row"><div class="jd-label">Stop (Plan)</div><div class="jd-value">${escapeHtml(t.plan.stop||'—')}</div></div>
     <div class="jd-row"><div class="jd-label">Target (Plan)</div><div class="jd-value">${escapeHtml(t.plan.target||'—')}</div></div>
     <div class="jd-row"><div class="jd-label">Entry trigger</div><div class="jd-value">${escapeHtml(t.plan.entryPA||'—')}${t.plan.entryNote?' — '+escapeHtml(t.plan.entryNote):''}</div></div>
+    ${t.check.entryMode?`<div class="jd-row"><div class="jd-label">Planned entry</div><div class="jd-value">${t.check.entryMode==='pa'?'Price action':'Limit order'}${(t.check.entryMode==='pa'||(t.plan.paChecks&&t.plan.paChecks.length))?' — double check '+((t.plan.paChecks||[]).length)+'/3':''}</div></div>`:''}
     <div class="jd-row"><div class="jd-label">Mindset going in</div><div class="jd-value">${escapeHtml(t.check.mindset||'—')}</div></div>
   `;
   recapPanel.appendChild(recap);
